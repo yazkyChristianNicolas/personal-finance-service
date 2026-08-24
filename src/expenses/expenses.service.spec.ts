@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
 import { ExpensesRepository, CreateExpenseData } from './expenses.repository';
 import { GroupsService } from '../groups/groups.service';
@@ -54,6 +54,11 @@ describe('ExpensesService', () => {
   let service: ExpensesService;
   let expensesRepository: {
     create: jest.Mock<Promise<ExpenseModel>, [CreateExpenseData]>;
+    search: jest.Mock;
+    count: jest.Mock;
+    findById: jest.Mock;
+    update: jest.Mock;
+    delete: jest.Mock;
   };
   let groupsService: {
     assertMembership: jest.Mock;
@@ -68,6 +73,11 @@ describe('ExpensesService', () => {
       create: jest
         .fn<Promise<ExpenseModel>, [CreateExpenseData]>()
         .mockImplementation(fakeCreate),
+      search: jest.fn(),
+      count: jest.fn(),
+      findById: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
     };
     groupsService = {
       assertMembership: jest.fn().mockResolvedValue(undefined),
@@ -212,5 +222,175 @@ describe('ExpensesService', () => {
         }),
       ),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  describe('search', () => {
+    const EXPENSE_MODEL: ExpenseModel = {
+      id: 'expense-1',
+      date: new Date('2026-01-01'),
+      amount: 1000,
+      currency: 'ARS',
+      description: 'test',
+      category: 'groceries',
+      groupId: GROUP_ID,
+      paymentMethodId: PAYMENT_METHOD_ID,
+      createdByUserId: USER_ID,
+      isRecurring: false,
+      recurringTemplateId: null,
+      installmentPlanId: null,
+      createdAt: new Date('2026-01-01'),
+      splits: [],
+    };
+
+    it('sin group_id, filtra implícitamente por los grupos del usuario', async () => {
+      groupsService.getMemberGroupIds.mockResolvedValue(['group-a', 'group-b']);
+      expensesRepository.search.mockResolvedValue([EXPENSE_MODEL]);
+      expensesRepository.count.mockResolvedValue(1);
+
+      const result = await service.search(USER_ID, {});
+
+      expect(groupsService.assertMembership).not.toHaveBeenCalled();
+      const [filter] = expensesRepository.search.mock.calls[0] as [
+        { groupIds: string[] },
+      ];
+      expect(filter.groupIds).toEqual(['group-a', 'group-b']);
+      expect(result.data[0]).not.toHaveProperty('splits'); // shape minificado
+    });
+
+    it('con group_id puntual, valida membresía antes de filtrar', async () => {
+      expensesRepository.search.mockResolvedValue([]);
+      expensesRepository.count.mockResolvedValue(0);
+
+      await service.search(USER_ID, { groupId: GROUP_ID });
+
+      expect(groupsService.assertMembership).toHaveBeenCalledWith(
+        USER_ID,
+        GROUP_ID,
+      );
+      const [filter] = expensesRepository.search.mock.calls[0] as [
+        { groupIds: string[] },
+      ];
+      expect(filter.groupIds).toEqual([GROUP_ID]);
+    });
+  });
+
+  describe('findById', () => {
+    const EXPENSE_MODEL: ExpenseModel = {
+      id: 'expense-1',
+      date: new Date('2026-01-01'),
+      amount: 1000,
+      currency: 'ARS',
+      description: 'test',
+      category: 'groceries',
+      groupId: GROUP_ID,
+      paymentMethodId: PAYMENT_METHOD_ID,
+      createdByUserId: USER_ID,
+      isRecurring: false,
+      recurringTemplateId: null,
+      installmentPlanId: null,
+      createdAt: new Date('2026-01-01'),
+      splits: [],
+    };
+
+    it('lanza 404 si no existe', async () => {
+      expensesRepository.findById.mockResolvedValue(null);
+      await expect(service.findById(USER_ID, 'expense-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('valida membresía del grupo dueño del expense antes de devolverlo', async () => {
+      expensesRepository.findById.mockResolvedValue(EXPENSE_MODEL);
+      const result = await service.findById(USER_ID, 'expense-1');
+      expect(groupsService.assertMembership).toHaveBeenCalledWith(
+        USER_ID,
+        GROUP_ID,
+      );
+      expect(result.id).toBe('expense-1');
+    });
+  });
+
+  describe('patch', () => {
+    const EXPENSE_MODEL: ExpenseModel = {
+      id: 'expense-1',
+      date: new Date('2026-01-01'),
+      amount: 1000,
+      currency: 'ARS',
+      description: 'test',
+      category: 'groceries',
+      groupId: GROUP_ID,
+      paymentMethodId: PAYMENT_METHOD_ID,
+      createdByUserId: USER_ID,
+      isRecurring: false,
+      recurringTemplateId: null,
+      installmentPlanId: null,
+      createdAt: new Date('2026-01-01'),
+      splits: [],
+    };
+
+    beforeEach(() => {
+      expensesRepository.findById.mockResolvedValue(EXPENSE_MODEL);
+      expensesRepository.update.mockResolvedValue({
+        ...EXPENSE_MODEL,
+        description: 'actualizado',
+      });
+    });
+
+    it('no valida ownership de payment method si no cambia', async () => {
+      await service.patch(USER_ID, 'expense-1', { description: 'actualizado' });
+      expect(paymentMethodsService.assertOwnedByUser).not.toHaveBeenCalled();
+    });
+
+    it('valida ownership del nuevo payment method si cambia', async () => {
+      await service.patch(USER_ID, 'expense-1', { paymentMethodId: 'pm-2' });
+      expect(paymentMethodsService.assertOwnedByUser).toHaveBeenCalledWith(
+        'pm-2',
+        USER_ID,
+      );
+    });
+
+    it('devuelve el objeto actualizado mapeado', async () => {
+      const result = await service.patch(USER_ID, 'expense-1', {
+        description: 'actualizado',
+      });
+      expect(result.description).toBe('actualizado');
+    });
+  });
+
+  describe('delete', () => {
+    const EXPENSE_MODEL: ExpenseModel = {
+      id: 'expense-1',
+      date: new Date('2026-01-01'),
+      amount: 1000,
+      currency: 'ARS',
+      description: 'test',
+      category: 'groceries',
+      groupId: GROUP_ID,
+      paymentMethodId: PAYMENT_METHOD_ID,
+      createdByUserId: USER_ID,
+      isRecurring: false,
+      recurringTemplateId: null,
+      installmentPlanId: null,
+      createdAt: new Date('2026-01-01'),
+      splits: [],
+    };
+
+    it('valida membresía antes de borrar', async () => {
+      expensesRepository.findById.mockResolvedValue(EXPENSE_MODEL);
+      await service.delete(USER_ID, 'expense-1');
+      expect(groupsService.assertMembership).toHaveBeenCalledWith(
+        USER_ID,
+        GROUP_ID,
+      );
+      expect(expensesRepository.delete).toHaveBeenCalledWith('expense-1');
+    });
+
+    it('no borra si no existe', async () => {
+      expensesRepository.findById.mockResolvedValue(null);
+      await expect(service.delete(USER_ID, 'expense-1')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(expensesRepository.delete).not.toHaveBeenCalled();
+    });
   });
 });

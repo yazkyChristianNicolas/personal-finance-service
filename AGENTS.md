@@ -118,6 +118,16 @@ curl examples) is in `README.md`.
   imported directly in Models/DTOs/Services — not duplicated as app-owned
   enums. They're string constants, not entities; `microservice-layered-architecture`
   itself allows Enums in every layer.
+- **Unit tests mock the layer directly below, not Prisma/DB** — a Service
+  mocks its own Repository plus any other module's Service it calls
+  (never that module's Repository), a Controller mocks its Service, a
+  Repository test (rare — mostly `buildWhere`-style query-building logic)
+  mocks `PrismaService`. Direct class instantiation with plain
+  `{ method: jest.fn() }` objects, not `Test.createTestingModule`, unless
+  real DI resolution is actually being tested. `coverageThreshold.global.lines`
+  is 80 in `package.json`; `prisma/prisma.service.ts` is excluded from
+  `collectCoverageFrom` since it just wires up the real `PrismaClient`'s
+  `$connect`/`$disconnect` lifecycle — not meaningfully unit-testable.
 
 ## Known gaps (deliberately out of scope right now)
 

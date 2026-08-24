@@ -83,7 +83,23 @@ corregir algo, es una migración nueva.
 | `npm run start:dev` | API en watch mode |
 | `npm run build` / `npm run lint` | build / lint |
 | `npm run test` | unit tests |
+| `npm run test:cov` | unit tests + reporte de cobertura (umbral: 80% de líneas) |
 | `npm run test:e2e` | smoke test end-to-end (requiere `api-db`+`keycloak` levantados) |
+
+## Tests unitarios
+
+Patrón estándar de NestJS: instanciación directa de la clase bajo test con
+dependencias mockeadas a mano (`{ metodo: jest.fn() }`), sin `Test.createTestingModule`
+salvo que haga falta resolver DI real — no se pega a una base de datos real en
+ningún test unitario. Cada capa mockea solo la capa inmediatamente inferior
+(un Service mockea su Repository y los Services de otros módulos que consuma;
+un Controller mockea su Service), siguiendo el mismo aislamiento por capas de
+`microservice-layered-architecture`.
+
+`prisma/prisma.service.ts` está excluido de `collectCoverageFrom` (`package.json`):
+extiende el `PrismaClient` real y sus hooks de ciclo de vida llaman a
+`$connect()`/`$disconnect()` reales — no aporta testear eso de forma unitaria
+sin una base de datos viva o un mock frágil de internals generados por Prisma.
 
 ## Convenciones de diseño de API
 
