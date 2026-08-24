@@ -1,0 +1,215 @@
+// Personal Finance Service — data model
+// Fase 1 implementa lógica/endpoints para: User, Group, GroupMember, PaymentMethod,
+// Expense, ExpenseSplit, ApiKey.
+// RecurringTemplate, InstallmentPlan, CardStatement y StatementItem se modelan ya porque
+// Expense las referencia por FK, pero su lógica de negocio llega en fases 2/3.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id          String   @id // sub de Keycloak
+  email       String   @unique
+  displayName String?
+  createdAt   DateTime @default(now())
+
+  groupMemberships   GroupMember[]
+  paymentMethods     PaymentMethod[]
+  apiKeys            ApiKey[]
+  expensesCreated    Expense[]           @relation("CreatedBy")
+  recurringTemplates RecurringTemplate[]
+  cardStatements     CardStatement[]
+
+  @@map("users")
+}
+
+model Group {
+  id        String   @id @default(uuid())
+  name      String
+  isDefault Boolean  @default(false) // grupo "Personal" auto-creado por usuario
+  createdAt DateTime @default(now())
+
+  members            GroupMember[]
+  expenses           Expense[]
+  recurringTemplates RecurringTemplate[]
+
+  @@map("groups")
+}
+
+enum GroupRole {
+  OWNER
+  MEMBER
+}
+
+model GroupMember {
+  id      String    @id @default(uuid())
+  userId  String
+  groupId String
+  role    GroupRole @default(MEMBER)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([groupId])
+  @@map("group_members")
+}
+
+enum PaymentMethodType {
+  CASH
+  DEBIT
+  CREDIT
+}
+
+model PaymentMethod {
+  id                String            @id @default(uuid())
+  userId            String
+  name              String
+  type              PaymentMethodType
+  billingCycleStart Int? // día del mes, solo para CREDIT
+  billingCycleEnd   Int? // día del mes, solo para CREDIT
+  createdAt         DateTime          @default(now())
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenses           Expense[]
+  recurringTemplates RecurringTemplate[]
+  cardStatements     CardStatement[]
+
+  @@index([userId])
+  @@map("payment_methods")
+}
+
+model Expense {
+  id                  String   @id @default(uuid())
+  date                DateTime
+  amount              Int // en centavos
+  currency            String // ISO 4217, ej "ARS", "USD"
+  description         String
+  category            String
+  groupId             String
+  paymentMethodId     String
+  createdByUserId     String
+  isRecurring         Boolean  @default(false)
+  recurringTemplateId String?
+  installmentPlanId   String?
+  createdAt           DateTime @default(now())
+
+  group                Group              @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  paymentMethod        PaymentMethod      @relation(fields: [paymentMethodId], references: [id], onDelete: Restrict)
+  createdBy            User               @relation("CreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  splits               ExpenseSplit[]
+  recurringTemplate    RecurringTemplate? @relation(fields: [recurringTemplateId], references: [id])
+  installmentPlan      InstallmentPlan?   @relation(fields: [installmentPlanId], references: [id])
+  matchedStatementItem StatementItem?
+
+  @@index([groupId, date])
+  @@index([paymentMethodId])
+  @@index([createdByUserId])
+  @@map("expenses")
+}
+
+enum SplitStrategy {
+  EQUAL // 50/50 o N-way equal
+  PERCENTAGE // asimétrico por porcentaje
+  ROMANA // "a la romana" (proporcional a algún criterio, ej. ingreso)
+}
+
+model ExpenseSplit {
+  id         String @id @default(uuid())
+  expenseId  String
+  userId     String
+  amount     Int // monto que le corresponde a este miembro (centavos)
+  percentage Float? // opcional, según estrategia
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([expenseId])
+  @@index([userId])
+  @@map("expense_splits")
+}
+
+model RecurringTemplate {
+  id              String  @id @default(uuid())
+  userId          String
+  amount          Int
+  currency        String
+  description     String
+  category        String
+  groupId         String
+  paymentMethodId String
+  dayOfMonth      Int // día en que se genera el gasto
+  active          Boolean @default(true)
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group         Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
+  expenses      Expense[]
+
+  @@index([userId])
+  @@map("recurring_templates")
+}
+
+model InstallmentPlan {
+  id                 String @id @default(uuid())
+  totalAmount        Int
+  installmentsCount  Int
+  currentInstallment Int    @default(1)
+
+  expenses Expense[]
+
+  @@map("installment_plans")
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  userId     String
+  label      String
+  hash       String    @unique // sha256 de la key
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+model CardStatement {
+  id              String   @id @default(uuid())
+  userId          String
+  paymentMethodId String
+  periodStart     DateTime
+  periodEnd       DateTime
+  importedAt      DateTime @default(now())
+
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentMethod PaymentMethod   @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
+  items         StatementItem[]
+
+  @@index([userId])
+  @@map("card_statements")
+}
+
+model StatementItem {
+  id               String   @id @default(uuid())
+  cardStatementId  String
+  rawDescription   String
+  amount           Int
+  date             DateTime
+  matchedExpenseId String?  @unique // null = sin matchear
+  matchConfidence  Float?
+
+  cardStatement  CardStatement @relation(fields: [cardStatementId], references: [id], onDelete: Cascade)
+  matchedExpense Expense?      @relation(fields: [matchedExpenseId], references: [id])
+
+  @@index([cardStatementId])
+  @@map("statement_items")
+}

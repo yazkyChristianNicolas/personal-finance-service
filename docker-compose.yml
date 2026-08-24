@@ -1,0 +1,82 @@
+services:
+  api-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${API_DB_USER:-finance}
+      POSTGRES_PASSWORD: ${API_DB_PASSWORD:-finance}
+      POSTGRES_DB: ${API_DB_NAME:-finance}
+    ports:
+      - "${API_DB_PORT:-5432}:5432"
+    volumes:
+      - api-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${API_DB_USER:-finance}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER:-keycloak}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Fija el issuer de los tokens a la URL pública sin importar si el caller pega contra
+      # localhost (host) o contra el hostname interno `keycloak` (otro contenedor) — si no,
+      # Keycloak refleja el Host del request y el `iss` del JWT varía según quién lo pidió,
+      # rompiendo la validación de issuer en KeycloakAuthGuard.
+      KC_HOSTNAME: http://localhost:${KEYCLOAK_PORT:-8080}
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${API_DB_USER:-finance}:${API_DB_PASSWORD:-finance}@api-db:5432/${API_DB_NAME:-finance}?schema=public
+      # Issuer esperado en el `iss` del JWT (pinneado por KC_HOSTNAME arriba) vs. la URL por
+      # la que ESTE contenedor efectivamente alcanza a Keycloak (red interna de compose) —
+      # ver el comentario en KeycloakAuthGuard.
+      KEYCLOAK_ISSUER_URL: http://localhost:${KEYCLOAK_PORT:-8080}/realms/${KEYCLOAK_REALM:-personal-finance}
+      KEYCLOAK_JWKS_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-personal-finance}/protocol/openid-connect/certs
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      api-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+volumes:
+  api-db-data:
+  keycloak-db-data:

@@ -1,0 +1,10 @@
+node_modules
+dist
+generated
+.git
+.env
+*.log
+coverage
+.claude
+.windsurf
+.agents
