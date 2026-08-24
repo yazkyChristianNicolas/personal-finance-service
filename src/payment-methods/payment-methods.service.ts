@@ -2,41 +2,44 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePaymentMethodDto } from './dto/create-payment-method.dto';
 import { UpdatePaymentMethodDto } from './dto/update-payment-method.dto';
+import { PaymentMethodSearchResultDto } from './dto/payment-method-search-result.dto';
 import { PaymentMethodType } from '../../generated/prisma/enums';
 import {
-  decodeCursor,
-  normalizeLimit,
-  paginate,
-} from '../common/pagination/cursor-pagination.util';
+  buildSearchResponse,
+  GenericSearchResponse,
+  normalizePage,
+  normalizeSize,
+  offsetFor,
+} from '../common/pagination/pagination.util';
 
 @Injectable()
 export class PaymentMethodsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findMany(userId: string, params: { limit?: number; cursor?: string }) {
-    const limit = normalizeLimit(params.limit);
-    const decoded = decodeCursor(params.cursor);
+  async search(
+    userId: string,
+    params: { page?: number; size?: number },
+  ): Promise<GenericSearchResponse<PaymentMethodSearchResultDto>> {
+    const page = normalizePage(params.page);
+    const size = normalizeSize(params.size);
+    const where = { userId };
 
-    const rows = await this.prisma.paymentMethod.findMany({
-      where: {
-        userId,
-        ...(decoded
-          ? {
-              OR: [
-                { createdAt: { lt: new Date(decoded.sortValue) } },
-                {
-                  createdAt: new Date(decoded.sortValue),
-                  id: { lt: decoded.id },
-                },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-    });
+    const [rows, totalElements] = await Promise.all([
+      this.prisma.paymentMethod.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: offsetFor(page, size),
+        take: size,
+      }),
+      this.prisma.paymentMethod.count({ where }),
+    ]);
 
-    return paginate(rows, limit, params.cursor, (row) => row.createdAt);
+    const data: PaymentMethodSearchResultDto[] = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      type: row.type,
+    }));
+    return buildSearchResponse(data, totalElements, page, size);
   }
 
   create(userId: string, dto: CreatePaymentMethodDto) {
@@ -52,7 +55,7 @@ export class PaymentMethodsService {
     });
   }
 
-  async update(userId: string, id: string, dto: UpdatePaymentMethodDto) {
+  async patch(userId: string, id: string, dto: UpdatePaymentMethodDto) {
     const existing = await this.findOwnedOrThrow(userId, id);
     const nextType = dto.type ?? existing.type;
     const isCredit = nextType === PaymentMethodType.CREDIT;
@@ -72,7 +75,7 @@ export class PaymentMethodsService {
     });
   }
 
-  async remove(userId: string, id: string): Promise<void> {
+  async delete(userId: string, id: string): Promise<void> {
     await this.findOwnedOrThrow(userId, id);
     await this.prisma.paymentMethod.delete({ where: { id } });
   }

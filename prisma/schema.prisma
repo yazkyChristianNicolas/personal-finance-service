@@ -49,10 +49,11 @@ enum GroupRole {
 }
 
 model GroupMember {
-  id      String    @id @default(uuid())
-  userId  String
-  groupId String
-  role    GroupRole @default(MEMBER)
+  id        String    @id @default(uuid())
+  userId    String
+  groupId   String
+  role      GroupRole @default(MEMBER)
+  createdAt DateTime  @default(now())
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -122,11 +123,12 @@ enum SplitStrategy {
 }
 
 model ExpenseSplit {
-  id         String @id @default(uuid())
+  id         String   @id @default(uuid())
   expenseId  String
   userId     String
   amount     Int // monto que le corresponde a este miembro (centavos)
   percentage Float? // opcional, según estrategia
+  createdAt  DateTime @default(now())
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
 

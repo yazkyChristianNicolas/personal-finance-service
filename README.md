@@ -61,17 +61,61 @@ npm run start:dev
 
 ## Convenciones de diseño de API
 
-Sigue el skill `backend/rest-api-guidelines` (basado en las guías de Zalando): JSON en
+Sigue el skill `backend/rest-api-guidelines` (basado en las guías de Zalando) salvo en
+naming de métodos y paginación (ver más abajo, decisión explícita del proyecto): JSON en
 snake_case en el wire (el código interno es camelCase — ver
-`src/common/interceptors/case-conversion.interceptor.ts`), paginación cursor-based con
-objeto `page`, errores en `application/problem+json`, etc.
+`src/common/interceptors/case-conversion.interceptor.ts`), errores en
+`application/problem+json`, etc.
+
+### Naming de controllers/servicios
+
+Todos los controllers (y sus servicios) siguen el mismo patrón, derivado del método HTTP y
+si el recurso es singular o colección:
+
+| HTTP | Ruta | Método |
+|---|---|---|
+| `POST` | `/recurso` | `create()` |
+| `GET` | `/recurso/:id` | `findById()` |
+| `GET` | `/recurso` | `search()` |
+| `PATCH` | `/recurso/:id` | `patch()` |
+| `PUT` | `/recurso/:id` | `update()` (no usado todavía — todos los updates son parciales) |
+| `DELETE` | `/recurso/:id` | `delete()` |
+
+### Paginación y `search`
+
+Todo `search()` devuelve un `GenericSearchResponse` (offset-based, no cursor-based — ver
+`src/common/pagination/pagination.util.ts`):
+
+```json
+{
+  "data": [ /* objetos minificados */ ],
+  "meta": {
+    "current_page": 1,
+    "total_pages": 3,
+    "page_size": 20,
+    "total_elements": 42
+  }
+}
+```
+
+Query params: `page` (1-indexed, default 1) y `size` (default 20, máx 100) — no `limit`/`cursor`.
+
+`data` es un objeto **minificado**, distinto del que devuelve `findById` (donde existe). Por
+ejemplo `GET /expenses` (search) no trae `splits`/`payment_method_id`/`created_at`; para el
+objeto completo hay que pedir `GET /expenses/:id` (findById). Qué campos exactos va cada
+`search()` es una decisión por revisar/ajustar caso a caso — están en
+`src/*/dto/*-search-result.dto.ts` de cada módulo.
+
+`created_at` se persiste siempre que se crea un recurso (`@default(now())` en
+`prisma/schema.prisma`, para todos los modelos).
 
 ## Estructura
 
 ```
 src/
   common/          guards (Keycloak JWT + API Key + compuesto), filtro de errores,
-                   interceptor de casing, paginación cursor-based compartida
+                   interceptor de casing, paginación offset-based compartida
+                   (GenericSearchResponse)
   prisma/          PrismaService (driver adapter pg, Prisma 7)
   auth/            módulo global que expone los guards
   users/           sync de User desde el JWT (find-or-create on primer request)
@@ -89,8 +133,11 @@ src/
   Express 5.
 - **Dinero:** `amount` (centavos, `Int`) + `currency` planos en `Expense`, tal cual la spec —
   no el objeto `Money` anidado de la guideline.
-- **Paginación:** cursor-based en todas las colecciones (no estaba en la spec para
-  `/expenses`, la agrega la guideline).
+- **Paginación offset-based (`page`/`size`) con `total_elements`, no cursor-based:** decisión
+  explícita del proyecto, distinta de lo que recomienda la guideline (regla 160 prefiere
+  cursor; regla 254 evita `total_count` por el costo del `COUNT(*)`). Con volumen alto esto
+  puede pesar — si en algún momento hace falta cursor-based para alguna colección puntual,
+  es un cambio localizado a ese `search()` y su query DTO.
 - **Auth JWT sin dependencias extra:** JWK → clave pública vía `node:crypto` en vez de
   `jwks-rsa`/`jwk-to-pem` (evita `jose` ESM-only y una vulnerabilidad sin fix en `elliptic`).
 - **Issuer de Keycloak fijo (`KC_HOSTNAME`):** si no, el `iss` del JWT depende del host con el

@@ -6,10 +6,16 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import {
-  decodeCursor,
-  normalizeLimit,
-  paginate,
-} from '../common/pagination/cursor-pagination.util';
+  GroupMemberSearchResultDto,
+  GroupSearchResultDto,
+} from './dto/group-search-result.dto';
+import {
+  buildSearchResponse,
+  GenericSearchResponse,
+  normalizePage,
+  normalizeSize,
+  offsetFor,
+} from '../common/pagination/pagination.util';
 
 @Injectable()
 export class GroupsService {
@@ -31,30 +37,30 @@ export class GroupsService {
     });
   }
 
-  async findMany(userId: string, params: { limit?: number; cursor?: string }) {
-    const limit = normalizeLimit(params.limit);
-    const decoded = decodeCursor(params.cursor);
+  async search(
+    userId: string,
+    params: { page?: number; size?: number },
+  ): Promise<GenericSearchResponse<GroupSearchResultDto>> {
+    const page = normalizePage(params.page);
+    const size = normalizeSize(params.size);
+    const where = { members: { some: { userId } } };
 
-    const rows = await this.prisma.group.findMany({
-      where: {
-        members: { some: { userId } },
-        ...(decoded
-          ? {
-              OR: [
-                { createdAt: { lt: new Date(decoded.sortValue) } },
-                {
-                  createdAt: new Date(decoded.sortValue),
-                  id: { lt: decoded.id },
-                },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-    });
+    const [rows, totalElements] = await Promise.all([
+      this.prisma.group.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: offsetFor(page, size),
+        take: size,
+      }),
+      this.prisma.group.count({ where }),
+    ]);
 
-    return paginate(rows, limit, params.cursor, (row) => row.createdAt);
+    const data: GroupSearchResultDto[] = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      isDefault: row.isDefault,
+    }));
+    return buildSearchResponse(data, totalElements, page, size);
   }
 
   async create(userId: string, dto: CreateGroupDto) {
@@ -83,15 +89,38 @@ export class GroupsService {
     }
   }
 
-  async findMembers(userId: string, groupId: string) {
+  async searchMembers(
+    userId: string,
+    groupId: string,
+    params: { page?: number; size?: number },
+  ): Promise<GenericSearchResponse<GroupMemberSearchResultDto>> {
     await this.assertMembership(userId, groupId);
-    return this.prisma.groupMember.findMany({
-      where: { groupId },
-      include: {
-        user: { select: { id: true, email: true, displayName: true } },
-      },
-      orderBy: { id: 'asc' },
-    });
+
+    const page = normalizePage(params.page);
+    const size = normalizeSize(params.size);
+    const where = { groupId };
+
+    const [rows, totalElements] = await Promise.all([
+      this.prisma.groupMember.findMany({
+        where,
+        include: {
+          user: { select: { id: true, email: true, displayName: true } },
+        },
+        orderBy: { id: 'asc' },
+        skip: offsetFor(page, size),
+        take: size,
+      }),
+      this.prisma.groupMember.count({ where }),
+    ]);
+
+    const data: GroupMemberSearchResultDto[] = rows.map((row) => ({
+      id: row.id,
+      userId: row.userId,
+      role: row.role,
+      email: row.user.email,
+      displayName: row.user.displayName,
+    }));
+    return buildSearchResponse(data, totalElements, page, size);
   }
 
   /** Grupos donde el usuario es miembro — usado para filtrar implícitamente GET /expenses (regla 226). */

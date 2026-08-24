@@ -8,12 +8,15 @@ import { GroupsService } from '../groups/groups.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { QueryExpensesDto } from './dto/query-expenses.dto';
+import { ExpenseSearchResultDto } from './dto/expense-search-result.dto';
 import { SplitStrategy } from '../../generated/prisma/enums';
 import {
-  decodeCursor,
-  normalizeLimit,
-  paginate,
-} from '../common/pagination/cursor-pagination.util';
+  buildSearchResponse,
+  GenericSearchResponse,
+  normalizePage,
+  normalizeSize,
+  offsetFor,
+} from '../common/pagination/pagination.util';
 
 interface ComputedSplit {
   userId: string;
@@ -37,6 +40,7 @@ export class ExpensesService {
     });
     const splits = group.isDefault ? [] : await this.buildSplits(dto);
 
+    // amount/currency/etc. -> createdAt siempre queda seteado por Prisma (@default(now())).
     return this.prisma.expense.create({
       data: {
         date: new Date(dto.date),
@@ -53,48 +57,57 @@ export class ExpensesService {
     });
   }
 
-  async findMany(userId: string, query: QueryExpensesDto) {
-    const limit = normalizeLimit(query.limit);
-    const decoded = decodeCursor(query.cursor);
+  async search(
+    userId: string,
+    query: QueryExpensesDto,
+  ): Promise<GenericSearchResponse<ExpenseSearchResultDto>> {
+    const page = normalizePage(query.page);
+    const size = normalizeSize(query.size);
 
     const memberGroupIds = query.groupId
       ? await this.oneGroupIdIfMember(userId, query.groupId)
       : await this.groupsService.getMemberGroupIds(userId);
 
-    const rows = await this.prisma.expense.findMany({
-      where: {
-        groupId: { in: memberGroupIds },
-        ...(query.category ? { category: query.category } : {}),
-        ...(query.paymentMethodId
-          ? { paymentMethodId: query.paymentMethodId }
-          : {}),
-        ...(query.currency ? { currency: query.currency } : {}),
-        ...(query.dateFrom || query.dateTo
-          ? {
-              date: {
-                ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-                ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-              },
-            }
-          : {}),
-        ...(decoded
-          ? {
-              OR: [
-                { date: { lt: new Date(decoded.sortValue) } },
-                { date: new Date(decoded.sortValue), id: { lt: decoded.id } },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ date: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-      include: { splits: true },
-    });
+    const where = {
+      groupId: { in: memberGroupIds },
+      ...(query.category ? { category: query.category } : {}),
+      ...(query.paymentMethodId
+        ? { paymentMethodId: query.paymentMethodId }
+        : {}),
+      ...(query.currency ? { currency: query.currency } : {}),
+      ...(query.dateFrom || query.dateTo
+        ? {
+            date: {
+              ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+              ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+            },
+          }
+        : {}),
+    };
 
-    return paginate(rows, limit, query.cursor, (row) => row.date);
+    const [rows, totalElements] = await Promise.all([
+      this.prisma.expense.findMany({
+        where,
+        orderBy: [{ date: 'desc' }, { id: 'desc' }],
+        skip: offsetFor(page, size),
+        take: size,
+      }),
+      this.prisma.expense.count({ where }),
+    ]);
+
+    const data: ExpenseSearchResultDto[] = rows.map((row) => ({
+      id: row.id,
+      date: row.date,
+      amount: row.amount,
+      currency: row.currency,
+      description: row.description,
+      category: row.category,
+      groupId: row.groupId,
+    }));
+    return buildSearchResponse(data, totalElements, page, size);
   }
 
-  async findOne(userId: string, id: string) {
+  async findById(userId: string, id: string) {
     const expense = await this.prisma.expense.findUnique({
       where: { id },
       include: { splits: true },
@@ -106,8 +119,8 @@ export class ExpensesService {
     return expense;
   }
 
-  async update(userId: string, id: string, dto: UpdateExpenseDto) {
-    const expense = await this.findOne(userId, id);
+  async patch(userId: string, id: string, dto: UpdateExpenseDto) {
+    const expense = await this.findById(userId, id);
 
     if (dto.paymentMethodId) {
       await this.assertOwnsPaymentMethod(userId, dto.paymentMethodId);
@@ -127,8 +140,8 @@ export class ExpensesService {
     });
   }
 
-  async remove(userId: string, id: string): Promise<void> {
-    const expense = await this.findOne(userId, id);
+  async delete(userId: string, id: string): Promise<void> {
+    const expense = await this.findById(userId, id);
     await this.prisma.expense.delete({ where: { id: expense.id } });
   }
 

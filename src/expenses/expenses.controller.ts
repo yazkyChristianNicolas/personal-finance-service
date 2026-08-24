@@ -27,11 +27,11 @@ export class ExpensesController {
   constructor(private readonly expensesService: ExpensesService) {}
 
   @Get()
-  findMany(
+  search(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: QueryExpensesDto,
   ) {
-    return this.expensesService.findMany(user.userId, query);
+    return this.expensesService.search(user.userId, query);
   }
 
   @Post()
@@ -43,25 +43,25 @@ export class ExpensesController {
   }
 
   @Get(':id')
-  findOne(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.expensesService.findOne(user.userId, id);
+  findById(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.expensesService.findById(user.userId, id);
   }
 
   @Patch(':id')
-  update(
+  patch(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdateExpenseDto,
   ) {
-    return this.expensesService.update(user.userId, id, dto);
+    return this.expensesService.patch(user.userId, id, dto);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(
+  async delete(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ): Promise<void> {
-    await this.expensesService.remove(user.userId, id);
+    await this.expensesService.delete(user.userId, id);
   }
 }

@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "6f2a2c2e-6b3f-4e2a-9a7a-9b1f0c2a5d10",
     "name": "Personal Finance Service",
-    "description": "Colección de ejemplo para personal-finance-service (Fase 1). La autenticación se configura UNA sola vez a nivel colección (Bearer con la variable `{{access_token}}`) y todos los endpoints la heredan — no hace falta configurar auth request por request.\n\n## Cómo usar\n1. Levantá el stack local: `docker compose up -d` en el repo (ver README).\n2. Corré la request `Auth > Get JWT (Keycloak password grant)` — su test script guarda el token en la variable de colección `access_token` automáticamente.\n3. A partir de ahí, cualquier request de las carpetas Groups/Payment Methods/Expenses/API Keys ya sale autenticada.\n4. Alternativa: pegá manualmente una API Key (generada con `API Keys > Create API Key`) en `access_token` — el guard compuesto de la API acepta tanto un JWT de Keycloak como una API Key propia, indistintamente del auth type declarado en Postman.\n\nLas requests de creación (`Create Group`, `Create Payment Method`, `Create Expense (Personal)`, `Create API Key`) tienen test scripts que auto-completan las variables de colección relacionadas (`personal_group_id`, `payment_method_id`, etc.) para poder encadenar el resto de las requests sin copiar/pegar IDs a mano.\n\n`GET /groups/{id}/members`, splits `PERCENTAGE`/`ROMANA` con 2 miembros, etc. requieren un segundo usuario real en el grupo — la Fase 1 todavía no implementa `POST /groups/:id/invite` (ver README del repo), así que esos ejemplos quedan documentados con las variables `roommate_user_id` sin completar automáticamente.",
+    "description": "Colección de ejemplo para personal-finance-service (Fase 1). La autenticación se configura UNA sola vez a nivel colección (Bearer con la variable `{{access_token}}`) y todos los endpoints la heredan — no hace falta configurar auth request por request.\n\n## Cómo usar\n1. Levantá el stack local: `docker compose up -d` en el repo (ver README).\n2. Corré la request `Auth > Get JWT (Keycloak password grant)` — su test script guarda el token en la variable de colección `access_token` automáticamente.\n3. A partir de ahí, cualquier request de las carpetas Groups/Payment Methods/Expenses/API Keys ya sale autenticada.\n4. Alternativa: pegá manualmente una API Key (generada con `API Keys > Create API Key`) en `access_token` — el guard compuesto de la API acepta tanto un JWT de Keycloak como una API Key propia, indistintamente del auth type declarado en Postman.\n\nLas requests de creación (`Create Group`, `Create Payment Method`, `Create Expense (Personal)`, `Create API Key`) tienen test scripts que auto-completan las variables de colección relacionadas (`personal_group_id`, `payment_method_id`, etc.) para poder encadenar el resto de las requests sin copiar/pegar IDs a mano.\n\n`GET /groups/{id}/members`, splits `PERCENTAGE`/`ROMANA` con 2 miembros, etc. requieren un segundo usuario real en el grupo — la Fase 1 todavía no implementa `POST /groups/:id/invite` (ver README del repo), así que esos ejemplos quedan documentados con las variables `roommate_user_id` sin completar automáticamente.\n\n## Convención de naming y paginación\nLos controllers siguen el patrón POST->create, GET/{id}->findById, GET (colección)->search, PATCH/{id}->patch, DELETE/{id}->delete. Los endpoints `search` (Groups, Group Members, Payment Methods, Expenses, API Keys) devuelven un `GenericSearchResponse`: `{ \"data\": [...], \"meta\": { \"current_page\", \"total_pages\", \"page_size\", \"total_elements\" } }`, paginado con query params `page` (1-indexed) y `size`, no `limit`/`cursor`. En `Expenses`, `search` devuelve un objeto minificado (id/date/amount/currency/description/category/group_id) — el objeto completo con `splits` solo lo devuelve `findById`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -170,7 +170,7 @@
       "name": "Groups",
       "item": [
         {
-          "name": "List Groups",
+          "name": "Search Groups",
           "event": [
             {
               "listen": "test",
@@ -178,7 +178,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "const body = pm.response.json();",
-                  "const personal = (body.items || []).find((g) => g.is_default);",
+                  "const personal = (body.data || []).find((g) => g.is_default);",
                   "if (personal) {",
                   "    pm.collectionVariables.set('personal_group_id', personal.id);",
                   "}"
@@ -190,12 +190,12 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/groups?limit=20",
+              "raw": "{{base_url}}/groups?page=1&size=20",
               "host": ["{{base_url}}"],
               "path": ["groups"],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "", "disabled": true }
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" }
               ]
             },
             "description": "Grupos del usuario autenticado. Auto-completa `personal_group_id` con el grupo 'Personal' auto-creado en el primer login."
@@ -234,14 +234,18 @@
           }
         },
         {
-          "name": "List Group Members",
+          "name": "Search Group Members",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/groups/{{personal_group_id}}/members",
+              "raw": "{{base_url}}/groups/{{personal_group_id}}/members?page=1&size=20",
               "host": ["{{base_url}}"],
-              "path": ["groups", "{{personal_group_id}}", "members"]
+              "path": ["groups", "{{personal_group_id}}", "members"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" }
+              ]
             },
             "description": "404 si el grupo no existe, 403 si existe pero no sos miembro."
           }
@@ -252,17 +256,17 @@
       "name": "Payment Methods",
       "item": [
         {
-          "name": "List Payment Methods",
+          "name": "Search Payment Methods",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/payment-methods?limit=20",
+              "raw": "{{base_url}}/payment-methods?page=1&size=20",
               "host": ["{{base_url}}"],
               "path": ["payment-methods"],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "", "disabled": true }
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" }
               ]
             }
           }
@@ -300,7 +304,7 @@
           }
         },
         {
-          "name": "Update Payment Method",
+          "name": "Patch Payment Method",
           "request": {
             "method": "PATCH",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -335,26 +339,26 @@
       "name": "Expenses",
       "item": [
         {
-          "name": "List Expenses",
+          "name": "Search Expenses",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/expenses?date_from=2026-08-01&date_to=2026-08-31&limit=20",
+              "raw": "{{base_url}}/expenses?date_from=2026-08-01&date_to=2026-08-31&page=1&size=20",
               "host": ["{{base_url}}"],
               "path": ["expenses"],
               "query": [
                 { "key": "date_from", "value": "2026-08-01" },
                 { "key": "date_to", "value": "2026-08-31" },
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
                 { "key": "group_id", "value": "{{personal_group_id}}", "disabled": true },
                 { "key": "category", "value": "groceries", "disabled": true },
                 { "key": "payment_method_id", "value": "{{payment_method_id}}", "disabled": true },
                 { "key": "currency", "value": "ARS", "disabled": true }
               ]
             },
-            "description": "Sin group_id, filtra implícitamente por todos los grupos donde sos miembro (regla 226 de la guideline)."
+            "description": "Sin group_id, filtra implícitamente por todos los grupos donde sos miembro (regla 226 de la guideline). Respuesta minificada (id/date/amount/currency/description/category/group_id) — para el objeto completo con splits usá 'Get Expense by ID'."
           }
         },
         {
@@ -447,7 +451,7 @@
           }
         },
         {
-          "name": "Get Expense by ID",
+          "name": "Find Expense by ID",
           "request": {
             "method": "GET",
             "header": [],
@@ -459,7 +463,7 @@
           }
         },
         {
-          "name": "Update Expense",
+          "name": "Patch Expense",
           "request": {
             "method": "PATCH",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -530,24 +534,24 @@
           }
         },
         {
-          "name": "List API Keys",
+          "name": "Search API Keys",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api-keys?limit=20",
+              "raw": "{{base_url}}/api-keys?page=1&size=20",
               "host": ["{{base_url}}"],
               "path": ["api-keys"],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "", "disabled": true }
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" }
               ]
             },
             "description": "Nunca expone el valor ni el hash de la key, solo metadata."
           }
         },
         {
-          "name": "Revoke API Key",
+          "name": "Delete API Key",
           "request": {
             "method": "DELETE",
             "header": [],

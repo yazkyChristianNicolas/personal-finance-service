@@ -3,10 +3,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import {
-  decodeCursor,
-  normalizeLimit,
-  paginate,
-} from '../common/pagination/cursor-pagination.util';
+  buildSearchResponse,
+  GenericSearchResponse,
+  normalizePage,
+  normalizeSize,
+  offsetFor,
+} from '../common/pagination/pagination.util';
 
 const API_KEY_PREFIX = 'pfk_';
 
@@ -17,6 +19,14 @@ const API_KEY_LIST_SELECT = {
   lastUsedAt: true,
   revokedAt: true,
 } as const;
+
+export interface ApiKeySearchResultDto {
+  id: string;
+  label: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}
 
 @Injectable()
 export class ApiKeysService {
@@ -35,34 +45,30 @@ export class ApiKeysService {
     return { ...apiKey, key: plaintext };
   }
 
-  async findMany(userId: string, params: { limit?: number; cursor?: string }) {
-    const limit = normalizeLimit(params.limit);
-    const decoded = decodeCursor(params.cursor);
+  async search(
+    userId: string,
+    params: { page?: number; size?: number },
+  ): Promise<GenericSearchResponse<ApiKeySearchResultDto>> {
+    const page = normalizePage(params.page);
+    const size = normalizeSize(params.size);
+    const where = { userId };
 
-    const rows = await this.prisma.apiKey.findMany({
-      where: {
-        userId,
-        ...(decoded
-          ? {
-              OR: [
-                { createdAt: { lt: new Date(decoded.sortValue) } },
-                {
-                  createdAt: new Date(decoded.sortValue),
-                  id: { lt: decoded.id },
-                },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-      select: API_KEY_LIST_SELECT,
-    });
+    const [rows, totalElements] = await Promise.all([
+      this.prisma.apiKey.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: offsetFor(page, size),
+        take: size,
+        select: API_KEY_LIST_SELECT,
+      }),
+      this.prisma.apiKey.count({ where }),
+    ]);
 
-    return paginate(rows, limit, params.cursor, (row) => row.createdAt);
+    return buildSearchResponse(rows, totalElements, page, size);
   }
 
-  async revoke(userId: string, id: string): Promise<void> {
+  /** Soft-delete: marca revokedAt en vez de borrar la fila (se conserva el historial de uso). */
+  async delete(userId: string, id: string): Promise<void> {
     const apiKey = await this.prisma.apiKey.findUnique({ where: { id } });
     if (!apiKey || apiKey.userId !== userId) {
       throw new NotFoundException('api_key_not_found');

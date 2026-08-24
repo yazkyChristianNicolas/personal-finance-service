@@ -22,11 +22,8 @@ export class GroupsController {
   constructor(private readonly groupsService: GroupsService) {}
 
   @Get()
-  findMany(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: PageQueryDto,
-  ) {
-    return this.groupsService.findMany(user.userId, query);
+  search(@CurrentUser() user: AuthenticatedUser, @Query() query: PageQueryDto) {
+    return this.groupsService.search(user.userId, query);
   }
 
   @Post()
@@ -35,10 +32,11 @@ export class GroupsController {
   }
 
   @Get(':id/members')
-  findMembers(
+  searchMembers(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') groupId: string,
+    @Query() query: PageQueryDto,
   ) {
-    return this.groupsService.findMembers(user.userId, groupId);
+    return this.groupsService.searchMembers(user.userId, groupId, query);
   }
 }

@@ -34,19 +34,16 @@ export class ApiKeysController {
   }
 
   @Get()
-  findMany(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: PageQueryDto,
-  ) {
-    return this.apiKeysService.findMany(user.userId, query);
+  search(@CurrentUser() user: AuthenticatedUser, @Query() query: PageQueryDto) {
+    return this.apiKeysService.search(user.userId, query);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async revoke(
+  async delete(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ): Promise<void> {
-    await this.apiKeysService.revoke(user.userId, id);
+    await this.apiKeysService.delete(user.userId, id);
   }
 }

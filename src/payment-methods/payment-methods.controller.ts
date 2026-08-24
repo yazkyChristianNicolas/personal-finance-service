@@ -27,11 +27,8 @@ export class PaymentMethodsController {
   constructor(private readonly paymentMethodsService: PaymentMethodsService) {}
 
   @Get()
-  findMany(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: PageQueryDto,
-  ) {
-    return this.paymentMethodsService.findMany(user.userId, query);
+  search(@CurrentUser() user: AuthenticatedUser, @Query() query: PageQueryDto) {
+    return this.paymentMethodsService.search(user.userId, query);
   }
 
   @Post()
@@ -43,20 +40,20 @@ export class PaymentMethodsController {
   }
 
   @Patch(':id')
-  update(
+  patch(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdatePaymentMethodDto,
   ) {
-    return this.paymentMethodsService.update(user.userId, id, dto);
+    return this.paymentMethodsService.patch(user.userId, id, dto);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(
+  async delete(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ): Promise<void> {
-    await this.paymentMethodsService.remove(user.userId, id);
+    await this.paymentMethodsService.delete(user.userId, id);
   }
 }

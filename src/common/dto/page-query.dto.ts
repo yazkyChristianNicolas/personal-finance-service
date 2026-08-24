@@ -1,14 +1,16 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsPositive, IsString } from 'class-validator';
+import { IsInt, IsOptional, IsPositive } from 'class-validator';
 
 export class PageQueryDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @IsPositive()
-  limit?: number;
+  page?: number;
 
   @IsOptional()
-  @IsString()
-  cursor?: string;
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  size?: number;
 }

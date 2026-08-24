@@ -64,12 +64,17 @@ describe('App (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
-    const body = response.body as { items: Array<Record<string, unknown>> };
-    expect(body.items).toEqual(
+    const body = response.body as {
+      data: Array<Record<string, unknown>>;
+      meta: { current_page: number; total_elements: number };
+    };
+    expect(body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'Personal', is_default: true }),
       ]),
     );
+    expect(body.meta.current_page).toBe(1);
+    expect(body.meta.total_elements).toBeGreaterThanOrEqual(1);
   });
 });
 
