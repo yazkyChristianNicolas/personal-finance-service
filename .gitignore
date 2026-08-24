@@ -6,3 +6,12 @@ coverage
 .env
 
 /generated/prisma
+
+# Carpetas de skills/config auto-instaladas por CLIs de agentes de IA (ej. `prisma init`
+# instala esto solo). No se commitean para no traer contenido de terceros sin revisar.
+.claude/
+.windsurf/
+.agents/
+.cursor/
+.codeium/
+skills-lock.json
