@@ -50,6 +50,32 @@ docker compose up -d api-db keycloak-db keycloak
 npm run start:dev
 ```
 
+## Base de datos y migraciones
+
+Prisma Migrate versiona el schema (equivalente a Flyway/Liquibase): cada cambio queda como
+un `.sql` con timestamp en `prisma/migrations/`, commiteado a git — es el historial
+controlado de cómo se armaron las tablas.
+
+**Al levantar `docker compose up -d`, las migraciones pendientes se aplican solas.** Hay un
+servicio `migrate` (mismo `Dockerfile`, target `migrate`) que corre `prisma migrate deploy`
+una vez y termina; `api` tiene un `depends_on: migrate: condition: service_completed_successfully`,
+así que nunca arranca contra un schema desactualizado — ni en un clone nuevo, ni en CI.
+`migrate deploy` solo aplica lo que ya existe en `prisma/migrations/`; nunca crea ni resetea
+nada, es seguro correrlo repetidas veces.
+
+**Para cambiar el schema** (agregar una tabla/columna, etc.) durante desarrollo:
+
+```bash
+docker compose up -d api-db        # necesita la db levantada
+# editar prisma/schema.prisma
+npx prisma migrate dev --name describir_el_cambio
+```
+
+Esto genera el nuevo archivo en `prisma/migrations/`, lo aplica a la `api-db` local, y
+regenera el Prisma Client. Commiteá el `.sql` generado junto con el cambio de código que lo
+motivó — nunca edites un `.sql` de migración ya aplicado/commiteado a mano; si hace falta
+corregir algo, es una migración nueva.
+
 ## Scripts
 
 | Script | Qué hace |

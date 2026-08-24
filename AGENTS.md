@@ -75,6 +75,14 @@ curl examples) is in `README.md`.
   process actually fetches keys from — internal network when running in
   Docker) are separate env vars for exactly this reason; see the comment in
   `keycloak-auth.guard.ts` before collapsing them back into one.
+- **Migrations apply automatically on `docker compose up`** via a one-shot
+  `migrate` service (`Dockerfile`'s `migrate` build target — keeps the full
+  Prisma CLI, unlike the pruned `runtime` target) that runs
+  `prisma migrate deploy` and gates `api`'s startup with
+  `depends_on: condition: service_completed_successfully`. To add a new
+  migration during development, edit `prisma/schema.prisma` and run
+  `npx prisma migrate dev --name <description>` against the running `api-db`
+  from the host — never hand-edit an already-applied migration's `.sql`.
 - **Prisma generator uses `moduleFormat = "cjs"`** (`prisma/schema.prisma`) —
   this project is CommonJS (Nest's default) but Prisma 7's generated client is
   ESM by default, which breaks `require()` under Node/Jest without this.

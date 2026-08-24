@@ -55,6 +55,23 @@ services:
       keycloak-db:
         condition: service_healthy
 
+  # Job de un solo uso: aplica `prisma migrate deploy` (migraciones pendientes en
+  # prisma/migrations/, nunca crea ni resetea nada) antes de que `api` arranque. Así
+  # levantar el stack desde cero (clone nuevo, CI, etc.) siempre deja el schema al día sin
+  # pasos manuales.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${API_DB_USER:-finance}:${API_DB_PASSWORD:-finance}@api-db:5432/${API_DB_NAME:-finance}?schema=public
+    depends_on:
+      api-db:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -76,6 +93,8 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   api-db-data:
