@@ -64,6 +64,12 @@ curl examples) is in `README.md`.
 - **`created_at` is persisted on every created resource**, including
   child/association rows (`@default(now())` on every Prisma model, no
   exceptions).
+- **Every model's indexes are cross-checked against what its `search()`
+  actually filters/sorts by** (`crud-controller-conventions` skill) — see the
+  rationale comments right next to each `@@index(...)` in
+  `prisma/schema.prisma`. Don't add an index reflexively for a new filter
+  field, and don't strip one without checking why it's there first (some
+  exist for FK constraint performance, not search).
 
 ## Non-obvious decisions (and why)
 
@@ -103,6 +109,11 @@ curl examples) is in `README.md`.
 - **Any group member can `patch`/`delete` an expense**, not just its
   creator — the spec doesn't restrict this explicitly; flagged as a judgment
   call, revisit if it turns out to be wrong.
+- **`ExpenseSplit.userId` is indexed even though no endpoint uses it yet**
+  (decided 2026-08-24) — kept on purpose in anticipation of a "my
+  balance"/"who owes whom" endpoint, since the splits model already exists
+  and the index is cheap to carry. If that feature still hasn't landed in a
+  few months, revisit whether to drop it.
 - **Enums stay as Prisma's generated enums** (`generated/prisma/enums`),
   imported directly in Models/DTOs/Services — not duplicated as app-owned
   enums. They're string constants, not entities; `microservice-layered-architecture`

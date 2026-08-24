@@ -58,8 +58,8 @@ model GroupMember {
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, groupId])
-  @@index([groupId])
+  @@unique([userId, groupId]) // cubre "mis grupos" (Group.search) y el chequeo de membresía
+  @@index([groupId]) // cubre "miembros de un grupo" (searchMembers) y el cálculo de splits (getMemberUserIds)
   @@map("group_members")
 }
 
@@ -83,7 +83,7 @@ model PaymentMethod {
   recurringTemplates RecurringTemplate[]
   cardStatements     CardStatement[]
 
-  @@index([userId])
+  @@index([userId]) // GET /payment-methods: único filtro de search()
   @@map("payment_methods")
 }
 
@@ -110,8 +110,16 @@ model Expense {
   installmentPlan      InstallmentPlan?   @relation(fields: [installmentPlanId], references: [id])
   matchedStatementItem StatementItem?
 
+  // GET /expenses: group_id (siempre presente, viene de la membresía) + rango date_from/date_to
+  // + ORDER BY date DESC — el filtro obligatorio de search(), cubre el caso de uso principal.
   @@index([groupId, date])
+  // Sin uso por search() hoy — category/currency/payment_method_id son filtros opcionales de
+  // baja selectividad que siempre van acompañados de group_id, así que el índice de arriba ya
+  // los cubre razonablemente bien. Este índice existe por el onDelete: Restrict de la FK
+  // paymentMethod (Postgres necesita recorrer rápido "¿hay expenses con este payment_method_id?"
+  // al intentar borrar un PaymentMethod), no por búsqueda.
   @@index([paymentMethodId])
+  // Ídem — onDelete: Restrict de la FK createdBy. No hay filtro por creador en ningún endpoint hoy.
   @@index([createdByUserId])
   @@map("expenses")
 }
@@ -132,7 +140,11 @@ model ExpenseSplit {
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
 
-  @@index([expenseId])
+  @@index([expenseId]) // ExpensesRepository.findById/search hacen include: { splits: true }
+  // Sin uso por ningún endpoint hoy — no existe todavía un "mis splits"/balance entre usuarios.
+  // Se deja a propósito (decisión 2026-08-24): la feature de "quién le debe a quién" es muy
+  // probable dado que el modelo de splits ya existe, y el costo de mantenerlo es bajo. Si en
+  // unos meses sigue sin usarse, sacarlo.
   @@index([userId])
   @@map("expense_splits")
 }
@@ -180,7 +192,7 @@ model ApiKey {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([userId]) // GET /api-keys: único filtro de search()
   @@map("api_keys")
 }
 
