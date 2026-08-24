@@ -1,0 +1,565 @@
+{
+  "info": {
+    "_postman_id": "6f2a2c2e-6b3f-4e2a-9a7a-9b1f0c2a5d10",
+    "name": "Personal Finance Service",
+    "description": "Colección de ejemplo para personal-finance-service (Fase 1). La autenticación se configura UNA sola vez a nivel colección (Bearer con la variable `{{access_token}}`) y todos los endpoints la heredan — no hace falta configurar auth request por request.\n\n## Cómo usar\n1. Levantá el stack local: `docker compose up -d` en el repo (ver README).\n2. Corré la request `Auth > Get JWT (Keycloak password grant)` — su test script guarda el token en la variable de colección `access_token` automáticamente.\n3. A partir de ahí, cualquier request de las carpetas Groups/Payment Methods/Expenses/API Keys ya sale autenticada.\n4. Alternativa: pegá manualmente una API Key (generada con `API Keys > Create API Key`) en `access_token` — el guard compuesto de la API acepta tanto un JWT de Keycloak como una API Key propia, indistintamente del auth type declarado en Postman.\n\nLas requests de creación (`Create Group`, `Create Payment Method`, `Create Expense (Personal)`, `Create API Key`) tienen test scripts que auto-completan las variables de colección relacionadas (`personal_group_id`, `payment_method_id`, etc.) para poder encadenar el resto de las requests sin copiar/pegar IDs a mano.\n\n`GET /groups/{id}/members`, splits `PERCENTAGE`/`ROMANA` con 2 miembros, etc. requieren un segundo usuario real en el grupo — la Fase 1 todavía no implementa `POST /groups/:id/invite` (ver README del repo), así que esos ejemplos quedan documentados con las variables `roommate_user_id` sin completar automáticamente.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string",
+      "description": "URL base de personal-finance-service"
+    },
+    {
+      "key": "keycloak_base_url",
+      "value": "http://localhost:8080",
+      "type": "string",
+      "description": "URL base de Keycloak (dev)"
+    },
+    {
+      "key": "keycloak_realm",
+      "value": "personal-finance",
+      "type": "string"
+    },
+    {
+      "key": "keycloak_client_id",
+      "value": "personal-finance-dev-test",
+      "type": "string",
+      "description": "Client público con password grant habilitado, solo para dev/test (ver keycloak/realm-export.json)"
+    },
+    {
+      "key": "keycloak_username",
+      "value": "testuser",
+      "type": "string"
+    },
+    {
+      "key": "keycloak_password",
+      "value": "testpassword",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string",
+      "description": "Bearer token usado por TODA la colección (auth a nivel proyecto). Se completa solo al correr 'Auth > Get JWT', o pegá acá una API Key para probar ese flujo en su lugar."
+    },
+    {
+      "key": "personal_group_id",
+      "value": "",
+      "type": "string",
+      "description": "Se completa solo al correr 'Groups > List Groups' (toma el grupo con is_default=true)"
+    },
+    {
+      "key": "shared_group_id",
+      "value": "",
+      "type": "string",
+      "description": "Se completa solo al correr 'Groups > Create Group'"
+    },
+    {
+      "key": "payment_method_id",
+      "value": "",
+      "type": "string",
+      "description": "Se completa solo al correr 'Payment Methods > Create Payment Method'"
+    },
+    {
+      "key": "expense_id",
+      "value": "",
+      "type": "string",
+      "description": "Se completa solo al correr 'Expenses > Create Expense (Personal, sin split)'"
+    },
+    {
+      "key": "api_key_id",
+      "value": "",
+      "type": "string",
+      "description": "Se completa solo al correr 'API Keys > Create API Key'"
+    },
+    {
+      "key": "api_key_value",
+      "value": "",
+      "type": "string",
+      "description": "Valor en texto plano de la API Key recién creada (solo se devuelve una vez) — pegalo en 'access_token' si querés probar ese auth path"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string",
+      "description": "Tu propio userId (sub del JWT). Completalo a mano mirando el payload del token, o el created_by_user_id de un expense creado."
+    },
+    {
+      "key": "roommate_user_id",
+      "value": "",
+      "type": "string",
+      "description": "userId de un segundo miembro del grupo compartido, para los ejemplos de split PERCENTAGE/ROMANA. Requiere invitar a otro usuario al grupo (no implementado en Fase 1)."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        },
+        "description": "No requiere auth — sobreescribe el auth heredado de la colección con 'No Auth' explícito."
+      }
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Get JWT (Keycloak password grant)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.access_token) {",
+                  "    pm.collectionVariables.set('access_token', body.access_token);",
+                  "}",
+                  "pm.test('Se obtuvo un access_token', function () {",
+                  "    pm.expect(body.access_token).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{keycloak_client_id}}", "type": "text" },
+                { "key": "grant_type", "value": "password", "type": "text" },
+                { "key": "username", "value": "{{keycloak_username}}", "type": "text" },
+                { "key": "password", "value": "{{keycloak_password}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{keycloak_base_url}}/realms/{{keycloak_realm}}/protocol/openid-connect/token",
+              "host": ["{{keycloak_base_url}}"],
+              "path": ["realms", "{{keycloak_realm}}", "protocol", "openid-connect", "token"]
+            },
+            "description": "Password grant contra el client de dev/test. Guarda el access_token en la variable de colección `access_token` — a partir de acá el resto de la colección ya queda autenticada."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Groups",
+      "item": [
+        {
+          "name": "List Groups",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const personal = (body.items || []).find((g) => g.is_default);",
+                  "if (personal) {",
+                  "    pm.collectionVariables.set('personal_group_id', personal.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/groups?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["groups"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "cursor", "value": "", "disabled": true }
+              ]
+            },
+            "description": "Grupos del usuario autenticado. Auto-completa `personal_group_id` con el grupo 'Personal' auto-creado en el primer login."
+          }
+        },
+        {
+          "name": "Create Group",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) {",
+                  "    pm.collectionVariables.set('shared_group_id', body.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Roommates\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/groups",
+              "host": ["{{base_url}}"],
+              "path": ["groups"]
+            },
+            "description": "Crea un grupo compartido (no-Personal). Auto-completa `shared_group_id`."
+          }
+        },
+        {
+          "name": "List Group Members",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/groups/{{personal_group_id}}/members",
+              "host": ["{{base_url}}"],
+              "path": ["groups", "{{personal_group_id}}", "members"]
+            },
+            "description": "404 si el grupo no existe, 403 si existe pero no sos miembro."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment Methods",
+      "item": [
+        {
+          "name": "List Payment Methods",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payment-methods?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["payment-methods"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "cursor", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Payment Method",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) {",
+                  "    pm.collectionVariables.set('payment_method_id', body.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tarjeta Visa\",\n  \"type\": \"CREDIT\",\n  \"billing_cycle_start\": 1,\n  \"billing_cycle_end\": 30\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/payment-methods",
+              "host": ["{{base_url}}"],
+              "path": ["payment-methods"]
+            },
+            "description": "billing_cycle_start/end solo aplican (y se persisten) para type=CREDIT. Auto-completa `payment_method_id`."
+          }
+        },
+        {
+          "name": "Update Payment Method",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tarjeta Visa Platinum\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/payment-methods/{{payment_method_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["payment-methods", "{{payment_method_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Payment Method",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payment-methods/{{payment_method_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["payment-methods", "{{payment_method_id}}"]
+            },
+            "description": "204 No Content si sale bien."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Expenses",
+      "item": [
+        {
+          "name": "List Expenses",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/expenses?date_from=2026-08-01&date_to=2026-08-31&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["expenses"],
+              "query": [
+                { "key": "date_from", "value": "2026-08-01" },
+                { "key": "date_to", "value": "2026-08-31" },
+                { "key": "limit", "value": "20" },
+                { "key": "cursor", "value": "", "disabled": true },
+                { "key": "group_id", "value": "{{personal_group_id}}", "disabled": true },
+                { "key": "category", "value": "groceries", "disabled": true },
+                { "key": "payment_method_id", "value": "{{payment_method_id}}", "disabled": true },
+                { "key": "currency", "value": "ARS", "disabled": true }
+              ]
+            },
+            "description": "Sin group_id, filtra implícitamente por todos los grupos donde sos miembro (regla 226 de la guideline)."
+          }
+        },
+        {
+          "name": "Create Expense (Personal, sin split)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) {",
+                  "    pm.collectionVariables.set('expense_id', body.id);",
+                  "}",
+                  "if (body.created_by_user_id) {",
+                  "    pm.collectionVariables.set('user_id', body.created_by_user_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-08-20\",\n  \"amount\": 150000,\n  \"currency\": \"ARS\",\n  \"description\": \"Supermercado\",\n  \"category\": \"groceries\",\n  \"group_id\": \"{{personal_group_id}}\",\n  \"payment_method_id\": \"{{payment_method_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/expenses",
+              "host": ["{{base_url}}"],
+              "path": ["expenses"]
+            },
+            "description": "Grupo Personal -> no requiere split_strategy. amount va en centavos (150000 = $1500.00). Auto-completa `expense_id` y `user_id`."
+          }
+        },
+        {
+          "name": "Create Expense (Shared, split EQUAL)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-08-20\",\n  \"amount\": 9000,\n  \"currency\": \"ARS\",\n  \"description\": \"Alquiler\",\n  \"category\": \"rent\",\n  \"group_id\": \"{{shared_group_id}}\",\n  \"payment_method_id\": \"{{payment_method_id}}\",\n  \"split_strategy\": \"EQUAL\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/expenses",
+              "host": ["{{base_url}}"],
+              "path": ["expenses"]
+            },
+            "description": "Grupo no-Personal -> requiere split_strategy. EQUAL reparte entre TODOS los miembros actuales del grupo (con `shared_group_id` recién creado, sos el único miembro, así que el split completo cae en `user_id`)."
+          }
+        },
+        {
+          "name": "Create Expense (Shared, split PERCENTAGE)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-08-20\",\n  \"amount\": 10000,\n  \"currency\": \"ARS\",\n  \"description\": \"Internet\",\n  \"category\": \"utilities\",\n  \"group_id\": \"{{shared_group_id}}\",\n  \"payment_method_id\": \"{{payment_method_id}}\",\n  \"split_strategy\": \"PERCENTAGE\",\n  \"split_members\": [\n    { \"user_id\": \"{{user_id}}\", \"percentage\": 50 },\n    { \"user_id\": \"{{roommate_user_id}}\", \"percentage\": 50 }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/expenses",
+              "host": ["{{base_url}}"],
+              "path": ["expenses"]
+            },
+            "description": "Los porcentajes deben sumar 100. Requiere que `roommate_user_id` sea miembro real de `shared_group_id` (ver nota sobre invitaciones en la descripción de la colección)."
+          }
+        },
+        {
+          "name": "Create Expense (Shared, split ROMANA)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-08-20\",\n  \"amount\": 10000,\n  \"currency\": \"ARS\",\n  \"description\": \"Compra proporcional al ingreso\",\n  \"category\": \"groceries\",\n  \"group_id\": \"{{shared_group_id}}\",\n  \"payment_method_id\": \"{{payment_method_id}}\",\n  \"split_strategy\": \"ROMANA\",\n  \"split_members\": [\n    { \"user_id\": \"{{user_id}}\", \"amount\": 6000 },\n    { \"user_id\": \"{{roommate_user_id}}\", \"amount\": 4000 }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/expenses",
+              "host": ["{{base_url}}"],
+              "path": ["expenses"]
+            },
+            "description": "Para ROMANA el cliente manda los montos ya calculados (no hay campo de 'ingreso' en el modelo) — deben sumar exactamente `amount`."
+          }
+        },
+        {
+          "name": "Get Expense by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/expenses/{{expense_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["expenses", "{{expense_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Expense",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Supermercado (actualizado)\",\n  \"amount\": 155000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/expenses/{{expense_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["expenses", "{{expense_id}}"]
+            },
+            "description": "No se puede cambiar group_id/split_strategy/split_members vía PATCH en esta fase."
+          }
+        },
+        {
+          "name": "Delete Expense",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/expenses/{{expense_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["expenses", "{{expense_id}}"]
+            },
+            "description": "204 No Content si sale bien."
+          }
+        }
+      ]
+    },
+    {
+      "name": "API Keys",
+      "item": [
+        {
+          "name": "Create API Key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) {",
+                  "    pm.collectionVariables.set('api_key_id', body.id);",
+                  "}",
+                  "if (body.key) {",
+                  "    pm.collectionVariables.set('api_key_value', body.key);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"mcp-agent\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api-keys",
+              "host": ["{{base_url}}"],
+              "path": ["api-keys"]
+            },
+            "description": "SIEMPRE requiere el JWT de Keycloak en `access_token` (no acepta otra API Key) — si `access_token` ya tiene una API Key pegada, esta request va a dar 401. El valor en texto plano (`key`) solo se devuelve acá; se guarda en `api_key_value`."
+          }
+        },
+        {
+          "name": "List API Keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api-keys?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["api-keys"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "cursor", "value": "", "disabled": true }
+              ]
+            },
+            "description": "Nunca expone el valor ni el hash de la key, solo metadata."
+          }
+        },
+        {
+          "name": "Revoke API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api-keys/{{api_key_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api-keys", "{{api_key_id}}"]
+            },
+            "description": "204 No Content. Idempotente: revocar dos veces no da error."
+          }
+        }
+      ]
+    }
+  ]
+}
