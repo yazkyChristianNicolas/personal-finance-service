@@ -4,18 +4,25 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { createHash } from 'node:crypto';
 import { Request } from 'express';
-import { PrismaService } from '../../prisma/prisma.service';
+import { ApiKeysService } from '../../api-keys/api-keys.service';
+import { UsersService } from '../../users/users.service';
 import { extractBearerToken } from './bearer-token.util';
 
 /**
  * Valida una API Key propia (hasheada con SHA-256 en DB, spec 4.2) y resuelve al mismo
  * userId interno que KeycloakAuthGuard. Cada key es personal e intransferible.
+ *
+ * Nunca toca Prisma directo — pasa por ApiKeysService.validateAndTouch (dueño de la tabla
+ * api_keys) y UsersService.findById (dueño de la tabla users), igual que cualquier otro
+ * consumidor cross-módulo.
  */
 @Injectable()
 export class ApiKeyAuthGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly apiKeysService: ApiKeysService,
+    private readonly usersService: UsersService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -24,25 +31,16 @@ export class ApiKeyAuthGuard implements CanActivate {
       throw new UnauthorizedException('missing_api_key');
     }
 
-    const hash = createHash('sha256').update(token).digest('hex');
-    const apiKey = await this.prisma.apiKey.findUnique({
-      where: { hash },
-      include: { user: true },
-    });
-
-    if (!apiKey || apiKey.revokedAt) {
+    const result = await this.apiKeysService.validateAndTouch(token);
+    if (!result) {
       throw new UnauthorizedException('invalid_api_key');
     }
-
-    await this.prisma.apiKey.update({
-      where: { id: apiKey.id },
-      data: { lastUsedAt: new Date() },
-    });
+    const user = await this.usersService.findById(result.userId);
 
     (request as Request & { user: unknown }).user = {
-      userId: apiKey.user.id,
-      email: apiKey.user.email,
-      displayName: apiKey.user.displayName,
+      userId: user.id,
+      email: user.email,
+      displayName: user.displayName,
       authMethod: 'api-key',
     };
     return true;

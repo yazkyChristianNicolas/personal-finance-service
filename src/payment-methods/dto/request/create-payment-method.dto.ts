@@ -8,7 +8,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { PaymentMethodType } from '../../../generated/prisma/enums';
+import { PaymentMethodType } from '../../../../generated/prisma/enums';
 
 export class CreatePaymentMethodDto {
   @IsString()

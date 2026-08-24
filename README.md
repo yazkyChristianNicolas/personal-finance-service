@@ -152,6 +152,30 @@ src/
   health/          healthcheck sin auth
 ```
 
+### Capas dentro de cada módulo
+
+Cada módulo de negocio (`expenses/`, `groups/`, `payment-methods/`, `api-keys/`,
+`users/`) sigue el skill `microservice-layered-architecture`, adaptado al layout
+módulo-por-feature de NestJS:
+
+```
+expenses/
+  expenses.controller.ts   # HTTP: guards, params, delega al service
+  expenses.service.ts      # lógica de negocio; llama a su Repository y a los
+                            # Services (no Repositories) de otros módulos
+  expenses.repository.ts   # único lugar que importa PrismaService/generated/prisma
+  expenses.mapper.ts       # estático: fila Prisma <-> Model <-> DTO de respuesta
+  model/expense.model.ts   # entidad de dominio, desacoplada de Prisma
+  dto/
+    request/                # inputs (create/update/query)
+    response/                # outputs (completo para findById, minificado para search)
+```
+
+Regla de oro: un Service nunca importa el Repository de otro módulo — si
+necesita datos de otro recurso, llama al Service dueño de ese recurso (ej.
+`ExpensesService` llama a `GroupsService.getMemberUserIds()` para calcular
+splits, nunca a `GroupsRepository` directo).
+
 ## Decisiones de esta fase (por si hace falta revisarlas)
 
 - **Casing:** wire format snake_case vía interceptor global; DTOs de query usan

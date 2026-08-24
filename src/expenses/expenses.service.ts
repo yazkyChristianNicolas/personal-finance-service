@@ -3,12 +3,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { ExpensesRepository } from './expenses.repository';
+import { ExpensesMapper } from './expenses.mapper';
+import { ExpenseModel } from './model/expense.model';
 import { GroupsService } from '../groups/groups.service';
-import { CreateExpenseDto } from './dto/create-expense.dto';
-import { UpdateExpenseDto } from './dto/update-expense.dto';
-import { QueryExpensesDto } from './dto/query-expenses.dto';
-import { ExpenseSearchResultDto } from './dto/expense-search-result.dto';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { CreateExpenseDto } from './dto/request/create-expense.dto';
+import { UpdateExpenseDto } from './dto/request/update-expense.dto';
+import { QueryExpensesDto } from './dto/request/query-expenses.dto';
+import { ExpenseResponseDto } from './dto/response/expense-response.dto';
+import { ExpenseSearchResultDto } from './dto/response/expense-search-result.dto';
 import { SplitStrategy } from '../../generated/prisma/enums';
 import {
   buildSearchResponse,
@@ -27,34 +31,37 @@ interface ComputedSplit {
 @Injectable()
 export class ExpensesService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly expensesRepository: ExpensesRepository,
     private readonly groupsService: GroupsService,
+    private readonly paymentMethodsService: PaymentMethodsService,
   ) {}
 
-  async create(userId: string, dto: CreateExpenseDto) {
+  async create(
+    userId: string,
+    dto: CreateExpenseDto,
+  ): Promise<ExpenseResponseDto> {
     await this.groupsService.assertMembership(userId, dto.groupId);
-    await this.assertOwnsPaymentMethod(userId, dto.paymentMethodId);
+    await this.paymentMethodsService.assertOwnedByUser(
+      dto.paymentMethodId,
+      userId,
+    );
 
-    const group = await this.prisma.group.findUniqueOrThrow({
-      where: { id: dto.groupId },
-    });
+    const group = await this.groupsService.findById(dto.groupId);
     const splits = group.isDefault ? [] : await this.buildSplits(dto);
 
-    // amount/currency/etc. -> createdAt siempre queda seteado por Prisma (@default(now())).
-    return this.prisma.expense.create({
-      data: {
-        date: new Date(dto.date),
-        amount: dto.amount,
-        currency: dto.currency,
-        description: dto.description,
-        category: dto.category,
-        groupId: dto.groupId,
-        paymentMethodId: dto.paymentMethodId,
-        createdByUserId: userId,
-        ...(splits.length > 0 ? { splits: { create: splits } } : {}),
-      },
-      include: { splits: true },
+    // createdAt siempre queda seteado por Prisma (@default(now())), no hace falta pasarlo.
+    const model = await this.expensesRepository.create({
+      date: new Date(dto.date),
+      amount: dto.amount,
+      currency: dto.currency,
+      description: dto.description,
+      category: dto.category,
+      groupId: dto.groupId,
+      paymentMethodId: dto.paymentMethodId,
+      createdByUserId: userId,
+      splits,
     });
+    return ExpensesMapper.toResponseDto(model);
   }
 
   async search(
@@ -64,97 +71,77 @@ export class ExpensesService {
     const page = normalizePage(query.page);
     const size = normalizeSize(query.size);
 
-    const memberGroupIds = query.groupId
+    const groupIds = query.groupId
       ? await this.oneGroupIdIfMember(userId, query.groupId)
       : await this.groupsService.getMemberGroupIds(userId);
 
-    const where = {
-      groupId: { in: memberGroupIds },
-      ...(query.category ? { category: query.category } : {}),
-      ...(query.paymentMethodId
-        ? { paymentMethodId: query.paymentMethodId }
-        : {}),
-      ...(query.currency ? { currency: query.currency } : {}),
-      ...(query.dateFrom || query.dateTo
-        ? {
-            date: {
-              ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-              ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-            },
-          }
-        : {}),
+    const filter = {
+      groupIds,
+      category: query.category,
+      paymentMethodId: query.paymentMethodId,
+      currency: query.currency,
+      dateFrom: query.dateFrom ? new Date(query.dateFrom) : undefined,
+      dateTo: query.dateTo ? new Date(query.dateTo) : undefined,
     };
 
-    const [rows, totalElements] = await Promise.all([
-      this.prisma.expense.findMany({
-        where,
-        orderBy: [{ date: 'desc' }, { id: 'desc' }],
-        skip: offsetFor(page, size),
-        take: size,
-      }),
-      this.prisma.expense.count({ where }),
+    const [models, totalElements] = await Promise.all([
+      this.expensesRepository.search(filter, offsetFor(page, size), size),
+      this.expensesRepository.count(filter),
     ]);
 
-    const data: ExpenseSearchResultDto[] = rows.map((row) => ({
-      id: row.id,
-      date: row.date,
-      amount: row.amount,
-      currency: row.currency,
-      description: row.description,
-      category: row.category,
-      groupId: row.groupId,
-    }));
-    return buildSearchResponse(data, totalElements, page, size);
+    return buildSearchResponse(
+      models.map(ExpensesMapper.toSearchResultDto),
+      totalElements,
+      page,
+      size,
+    );
   }
 
-  async findById(userId: string, id: string) {
-    const expense = await this.prisma.expense.findUnique({
-      where: { id },
-      include: { splits: true },
-    });
-    if (!expense) {
-      throw new NotFoundException('expense_not_found');
-    }
-    await this.groupsService.assertMembership(userId, expense.groupId);
-    return expense;
+  async findById(userId: string, id: string): Promise<ExpenseResponseDto> {
+    const model = await this.getModelOrThrow(userId, id);
+    return ExpensesMapper.toResponseDto(model);
   }
 
-  async patch(userId: string, id: string, dto: UpdateExpenseDto) {
-    const expense = await this.findById(userId, id);
+  async patch(
+    userId: string,
+    id: string,
+    dto: UpdateExpenseDto,
+  ): Promise<ExpenseResponseDto> {
+    const expense = await this.getModelOrThrow(userId, id);
 
     if (dto.paymentMethodId) {
-      await this.assertOwnsPaymentMethod(userId, dto.paymentMethodId);
+      await this.paymentMethodsService.assertOwnedByUser(
+        dto.paymentMethodId,
+        userId,
+      );
     }
 
-    return this.prisma.expense.update({
-      where: { id: expense.id },
-      data: {
-        date: dto.date ? new Date(dto.date) : undefined,
-        amount: dto.amount,
-        currency: dto.currency,
-        description: dto.description,
-        category: dto.category,
-        paymentMethodId: dto.paymentMethodId,
-      },
-      include: { splits: true },
+    const model = await this.expensesRepository.update(expense.id, {
+      date: dto.date ? new Date(dto.date) : undefined,
+      amount: dto.amount,
+      currency: dto.currency,
+      description: dto.description,
+      category: dto.category,
+      paymentMethodId: dto.paymentMethodId,
     });
+    return ExpensesMapper.toResponseDto(model);
   }
 
   async delete(userId: string, id: string): Promise<void> {
-    const expense = await this.findById(userId, id);
-    await this.prisma.expense.delete({ where: { id: expense.id } });
+    const expense = await this.getModelOrThrow(userId, id);
+    await this.expensesRepository.delete(expense.id);
   }
 
-  private async assertOwnsPaymentMethod(
+  private async getModelOrThrow(
     userId: string,
-    paymentMethodId: string,
-  ): Promise<void> {
-    const paymentMethod = await this.prisma.paymentMethod.findUnique({
-      where: { id: paymentMethodId },
-    });
-    if (!paymentMethod || paymentMethod.userId !== userId) {
-      throw new NotFoundException('payment_method_not_found');
+    id: string,
+  ): Promise<ExpenseModel> {
+    const model = await this.expensesRepository.findById(id);
+    if (!model) {
+      throw new NotFoundException('expense_not_found');
     }
+    await this.groupsService.assertMembership(userId, model.groupId);
+    return model;
   }
 
   /** Si se filtra por un groupId puntual, igual hay que validar membresía (404/403). */
@@ -173,27 +160,20 @@ export class ExpensesService {
       );
     }
 
-    const members = await this.prisma.groupMember.findMany({
-      where: { groupId: dto.groupId },
-      orderBy: { id: 'asc' },
-    });
-    if (members.length === 0) {
+    const memberUserIds = await this.groupsService.getMemberUserIds(
+      dto.groupId,
+    );
+    if (memberUserIds.length === 0) {
       throw new BadRequestException('group_has_no_members');
     }
 
     switch (dto.splitStrategy) {
       case SplitStrategy.EQUAL:
-        return this.splitEqual(
-          dto.amount,
-          members.map((m) => m.userId),
-        );
+        return this.splitEqual(dto.amount, memberUserIds);
       case SplitStrategy.PERCENTAGE:
         return this.splitByPercentage(dto);
       case SplitStrategy.ROMANA:
-        return this.splitRomana(
-          dto,
-          members.map((m) => m.userId),
-        );
+        return this.splitRomana(dto, memberUserIds);
       default:
         throw new BadRequestException('unsupported_split_strategy');
     }

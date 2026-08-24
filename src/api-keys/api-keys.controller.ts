@@ -16,7 +16,7 @@ import {
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
 import { ApiKeysService } from './api-keys.service';
-import { CreateApiKeyDto } from './dto/create-api-key.dto';
+import { CreateApiKeyDto } from './dto/request/create-api-key.dto';
 import { PageQueryDto } from '../common/dto/page-query.dto';
 
 /**

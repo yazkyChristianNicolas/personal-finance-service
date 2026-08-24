@@ -30,6 +30,17 @@ curl examples) is in `README.md`.
 
 ## Conventions this repo follows
 
+- **Layering** (`microservice-layered-architecture` skill, adapted to NestJS's
+  module-by-feature layout): each module (`expenses/`, `groups/`, ...) has
+  `<name>.controller.ts` → `<name>.service.ts` → `<name>.repository.ts`, plus
+  `model/` (domain entities) and `dto/{request,response}/`. **Only the
+  Repository imports `PrismaService`/`generated/prisma/*`** — Services never
+  touch Prisma directly, and never call another module's Repository (they call
+  that module's **Service** instead — e.g. `ExpensesService` asks
+  `GroupsService`/`PaymentMethodsService`, never `GroupsRepository`). Mappers
+  (`<name>.mapper.ts`, static methods) are the only place that converts
+  between a Prisma row, a Model, and a response DTO. See the plan history
+  for the full rationale if this needs re-explaining.
 - **Controller/service naming + list responses**: `crud-controller-conventions`
   skill — `create`/`findById`/`search`/`patch`/`delete`, and every `search()`
   returns a `GenericSearchResponse` (`{ data, meta }`, offset `page`/`size`
@@ -92,6 +103,10 @@ curl examples) is in `README.md`.
 - **Any group member can `patch`/`delete` an expense**, not just its
   creator — the spec doesn't restrict this explicitly; flagged as a judgment
   call, revisit if it turns out to be wrong.
+- **Enums stay as Prisma's generated enums** (`generated/prisma/enums`),
+  imported directly in Models/DTOs/Services — not duplicated as app-owned
+  enums. They're string constants, not entities; `microservice-layered-architecture`
+  itself allows Enums in every layer.
 
 ## Known gaps (deliberately out of scope right now)
 

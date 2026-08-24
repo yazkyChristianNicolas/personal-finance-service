@@ -17,9 +17,9 @@ import {
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
 import { ExpensesService } from './expenses.service';
-import { CreateExpenseDto } from './dto/create-expense.dto';
-import { UpdateExpenseDto } from './dto/update-expense.dto';
-import { QueryExpensesDto } from './dto/query-expenses.dto';
+import { CreateExpenseDto } from './dto/request/create-expense.dto';
+import { UpdateExpenseDto } from './dto/request/update-expense.dto';
+import { QueryExpensesDto } from './dto/request/query-expenses.dto';
 
 @Controller('expenses')
 @UseGuards(AuthGuard)

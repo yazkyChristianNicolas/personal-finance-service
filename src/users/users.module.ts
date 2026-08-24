@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { UsersService } from './users.service';
+import { UsersRepository } from './users.repository';
 import { GroupsModule } from '../groups/groups.module';
 
 /** Global por la misma razón que GroupsModule: KeycloakAuthGuard (en AuthModule) depende de
@@ -8,7 +9,7 @@ import { GroupsModule } from '../groups/groups.module';
 @Global()
 @Module({
   imports: [GroupsModule],
-  providers: [UsersService],
+  providers: [UsersService, UsersRepository],
   exports: [UsersService],
 })
 export class UsersModule {}

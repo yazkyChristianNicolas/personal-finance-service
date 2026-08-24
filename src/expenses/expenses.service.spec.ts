@@ -1,22 +1,15 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { ExpensesRepository, CreateExpenseData } from './expenses.repository';
 import { GroupsService } from '../groups/groups.service';
-import { CreateExpenseDto } from './dto/create-expense.dto';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
+import { CreateExpenseDto } from './dto/request/create-expense.dto';
+import { ExpenseModel } from './model/expense.model';
 
 const USER_ID = 'user-1';
 const GROUP_ID = 'group-1';
 const PAYMENT_METHOD_ID = 'pm-1';
-
-interface CreateSplit {
-  userId: string;
-  amount: number;
-}
-
-interface ExpenseCreateArgs {
-  data: { splits?: { create: CreateSplit[] } };
-}
 
 function baseDto(overrides: Partial<CreateExpenseDto> = {}): CreateExpenseDto {
   return {
@@ -31,61 +24,84 @@ function baseDto(overrides: Partial<CreateExpenseDto> = {}): CreateExpenseDto {
   };
 }
 
+/** Simula lo que haría el Repository real: arma un ExpenseModel a partir de la data recibida. */
+function fakeCreate(data: CreateExpenseData): Promise<ExpenseModel> {
+  return Promise.resolve({
+    id: 'expense-1',
+    date: data.date,
+    amount: data.amount,
+    currency: data.currency,
+    description: data.description,
+    category: data.category,
+    groupId: data.groupId,
+    paymentMethodId: data.paymentMethodId,
+    createdByUserId: data.createdByUserId,
+    isRecurring: false,
+    recurringTemplateId: null,
+    installmentPlanId: null,
+    createdAt: new Date('2026-01-01'),
+    splits: data.splits.map((s, index) => ({
+      id: `split-${index}`,
+      expenseId: 'expense-1',
+      userId: s.userId,
+      amount: s.amount,
+      percentage: s.percentage ?? null,
+    })),
+  });
+}
+
 describe('ExpensesService', () => {
   let service: ExpensesService;
-  let prisma: {
-    expense: { create: jest.Mock<Promise<unknown>, [ExpenseCreateArgs]> };
-    group: { findUniqueOrThrow: jest.Mock };
-    paymentMethod: { findUnique: jest.Mock };
-    groupMember: { findMany: jest.Mock };
+  let expensesRepository: {
+    create: jest.Mock<Promise<ExpenseModel>, [CreateExpenseData]>;
   };
-  let groupsService: { assertMembership: jest.Mock };
+  let groupsService: {
+    assertMembership: jest.Mock;
+    findById: jest.Mock;
+    getMemberUserIds: jest.Mock;
+    getMemberGroupIds: jest.Mock;
+  };
+  let paymentMethodsService: { assertOwnedByUser: jest.Mock };
 
   beforeEach(async () => {
-    prisma = {
-      expense: {
-        create: jest
-          .fn<Promise<unknown>, [ExpenseCreateArgs]>()
-          .mockImplementation(({ data }) => Promise.resolve(data)),
-      },
-      group: { findUniqueOrThrow: jest.fn() },
-      paymentMethod: { findUnique: jest.fn() },
-      groupMember: { findMany: jest.fn() },
+    expensesRepository = {
+      create: jest
+        .fn<Promise<ExpenseModel>, [CreateExpenseData]>()
+        .mockImplementation(fakeCreate),
     };
     groupsService = {
       assertMembership: jest.fn().mockResolvedValue(undefined),
+      findById: jest.fn(),
+      getMemberUserIds: jest.fn(),
+      getMemberGroupIds: jest.fn(),
+    };
+    paymentMethodsService = {
+      assertOwnedByUser: jest.fn().mockResolvedValue(undefined),
     };
 
     const module = await Test.createTestingModule({
       providers: [
         ExpensesService,
-        { provide: PrismaService, useValue: prisma },
+        { provide: ExpensesRepository, useValue: expensesRepository },
         { provide: GroupsService, useValue: groupsService },
+        { provide: PaymentMethodsService, useValue: paymentMethodsService },
       ],
     }).compile();
 
     service = module.get(ExpensesService);
-
-    prisma.paymentMethod.findUnique.mockResolvedValue({
-      id: PAYMENT_METHOD_ID,
-      userId: USER_ID,
-    });
   });
 
   it('no crea splits para el grupo Personal', async () => {
-    prisma.group.findUniqueOrThrow.mockResolvedValue({
-      id: GROUP_ID,
-      isDefault: true,
-    });
+    groupsService.findById.mockResolvedValue({ id: GROUP_ID, isDefault: true });
 
-    await service.create(USER_ID, baseDto());
+    const result = await service.create(USER_ID, baseDto());
 
-    const createCall = prisma.expense.create.mock.calls[0][0];
-    expect(createCall.data.splits).toBeUndefined();
+    expect(expensesRepository.create.mock.calls[0][0].splits).toEqual([]);
+    expect(result.splits).toEqual([]);
   });
 
   it('exige splitStrategy en un grupo no-Personal', async () => {
-    prisma.group.findUniqueOrThrow.mockResolvedValue({
+    groupsService.findById.mockResolvedValue({
       id: GROUP_ID,
       isDefault: false,
     });
@@ -96,17 +112,13 @@ describe('ExpensesService', () => {
   });
 
   it('EQUAL reparte el resto de centavos entre los primeros miembros para que la suma cierre exacto', async () => {
-    prisma.group.findUniqueOrThrow.mockResolvedValue({
+    groupsService.findById.mockResolvedValue({
       id: GROUP_ID,
       isDefault: false,
     });
-    prisma.groupMember.findMany.mockResolvedValue([
-      { userId: 'a' },
-      { userId: 'b' },
-      { userId: 'c' },
-    ]);
+    groupsService.getMemberUserIds.mockResolvedValue(['a', 'b', 'c']);
 
-    await service.create(
+    const result = await service.create(
       USER_ID,
       baseDto({
         amount: 1000,
@@ -114,22 +126,18 @@ describe('ExpensesService', () => {
       }),
     );
 
-    const splits = prisma.expense.create.mock.calls[0][0].data.splits!.create;
-    expect(splits.map((s) => s.amount)).toEqual([334, 333, 333]);
-    expect(splits.reduce((sum, s) => sum + s.amount, 0)).toBe(1000);
+    expect(result.splits.map((s) => s.amount)).toEqual([334, 333, 333]);
+    expect(result.splits.reduce((sum, s) => sum + s.amount, 0)).toBe(1000);
   });
 
   it('PERCENTAGE valida que los porcentajes sumen 100 y reconcilia el redondeo', async () => {
-    prisma.group.findUniqueOrThrow.mockResolvedValue({
+    groupsService.findById.mockResolvedValue({
       id: GROUP_ID,
       isDefault: false,
     });
-    prisma.groupMember.findMany.mockResolvedValue([
-      { userId: 'a' },
-      { userId: 'b' },
-    ]);
+    groupsService.getMemberUserIds.mockResolvedValue(['a', 'b']);
 
-    await service.create(
+    const result = await service.create(
       USER_ID,
       baseDto({
         amount: 1000,
@@ -141,19 +149,15 @@ describe('ExpensesService', () => {
       }),
     );
 
-    const splits = prisma.expense.create.mock.calls[0][0].data.splits!.create;
-    expect(splits.reduce((sum, s) => sum + s.amount, 0)).toBe(1000);
+    expect(result.splits.reduce((sum, s) => sum + s.amount, 0)).toBe(1000);
   });
 
   it('PERCENTAGE rechaza porcentajes que no suman 100', async () => {
-    prisma.group.findUniqueOrThrow.mockResolvedValue({
+    groupsService.findById.mockResolvedValue({
       id: GROUP_ID,
       isDefault: false,
     });
-    prisma.groupMember.findMany.mockResolvedValue([
-      { userId: 'a' },
-      { userId: 'b' },
-    ]);
+    groupsService.getMemberUserIds.mockResolvedValue(['a', 'b']);
 
     await expect(
       service.create(
@@ -170,14 +174,11 @@ describe('ExpensesService', () => {
   });
 
   it('ROMANA exige que los montos provistos sumen exactamente el total', async () => {
-    prisma.group.findUniqueOrThrow.mockResolvedValue({
+    groupsService.findById.mockResolvedValue({
       id: GROUP_ID,
       isDefault: false,
     });
-    prisma.groupMember.findMany.mockResolvedValue([
-      { userId: 'a' },
-      { userId: 'b' },
-    ]);
+    groupsService.getMemberUserIds.mockResolvedValue(['a', 'b']);
 
     await expect(
       service.create(
@@ -195,11 +196,11 @@ describe('ExpensesService', () => {
   });
 
   it('ROMANA rechaza un userId que no es miembro del grupo', async () => {
-    prisma.group.findUniqueOrThrow.mockResolvedValue({
+    groupsService.findById.mockResolvedValue({
       id: GROUP_ID,
       isDefault: false,
     });
-    prisma.groupMember.findMany.mockResolvedValue([{ userId: 'a' }]);
+    groupsService.getMemberUserIds.mockResolvedValue(['a']);
 
     await expect(
       service.create(

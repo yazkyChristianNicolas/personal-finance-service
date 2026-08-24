@@ -5,7 +5,7 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
-import { PageQueryDto } from '../../common/dto/page-query.dto';
+import { PageQueryDto } from '../../../common/dto/page-query.dto';
 
 /**
  * Query params en snake_case (regla 130 de la guideline) mapeados a camelCase vía

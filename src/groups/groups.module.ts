@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { GroupsController } from './groups.controller';
 import { GroupsService } from './groups.service';
+import { GroupsRepository } from './groups.repository';
 
 /**
  * Global: GroupsService es infraestructura transversal (Auth/Users/Expenses la necesitan) y
@@ -10,7 +11,7 @@ import { GroupsService } from './groups.service';
 @Global()
 @Module({
   controllers: [GroupsController],
-  providers: [GroupsService],
+  providers: [GroupsService, GroupsRepository],
   exports: [GroupsService],
 })
 export class GroupsModule {}

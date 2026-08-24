@@ -13,7 +13,7 @@ import {
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
 import { GroupsService } from './groups.service';
-import { CreateGroupDto } from './dto/create-group.dto';
+import { CreateGroupDto } from './dto/request/create-group.dto';
 import { PageQueryDto } from '../common/dto/page-query.dto';
 
 @Controller('groups')

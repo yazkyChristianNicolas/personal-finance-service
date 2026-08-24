@@ -12,7 +12,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { SplitStrategy } from '../../../generated/prisma/enums';
+import { SplitStrategy } from '../../../../generated/prisma/enums';
 import { ExpenseSplitMemberDto } from './expense-split-member.dto';
 
 export class CreateExpenseDto {

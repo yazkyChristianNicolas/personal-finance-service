@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateApiKeyDto } from './dto/create-api-key.dto';
+import { ApiKeysRepository } from './api-keys.repository';
+import { ApiKeysMapper } from './api-keys.mapper';
+import { ApiKeyModel } from './model/api-key.model';
+import { CreateApiKeyDto } from './dto/request/create-api-key.dto';
+import { ApiKeySearchResultDto } from './dto/response/api-key-search-result.dto';
+import { ApiKeyCreateResponseDto } from './dto/response/api-key-create-response.dto';
 import {
   buildSearchResponse,
   GenericSearchResponse,
@@ -12,37 +16,22 @@ import {
 
 const API_KEY_PREFIX = 'pfk_';
 
-const API_KEY_LIST_SELECT = {
-  id: true,
-  label: true,
-  createdAt: true,
-  lastUsedAt: true,
-  revokedAt: true,
-} as const;
-
-export interface ApiKeySearchResultDto {
-  id: string;
-  label: string;
-  createdAt: Date;
-  lastUsedAt: Date | null;
-  revokedAt: Date | null;
-}
-
 @Injectable()
 export class ApiKeysService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly apiKeysRepository: ApiKeysRepository) {}
 
   /** El valor en texto plano se devuelve UNA sola vez acá; nunca vuelve a ser recuperable. */
-  async create(userId: string, dto: CreateApiKeyDto) {
+  async create(
+    userId: string,
+    dto: CreateApiKeyDto,
+  ): Promise<ApiKeyCreateResponseDto> {
     const plaintext = `${API_KEY_PREFIX}${randomBytes(32).toString('base64url')}`;
-    const hash = hashKey(plaintext);
-
-    const apiKey = await this.prisma.apiKey.create({
-      data: { userId, label: dto.label, hash },
-      select: API_KEY_LIST_SELECT,
-    });
-
-    return { ...apiKey, key: plaintext };
+    const model = await this.apiKeysRepository.create(
+      userId,
+      dto.label,
+      hashKey(plaintext),
+    );
+    return ApiKeysMapper.toCreateResponseDto(model, plaintext);
   }
 
   async search(
@@ -53,33 +42,50 @@ export class ApiKeysService {
     const size = normalizeSize(params.size);
     const where = { userId };
 
-    const [rows, totalElements] = await Promise.all([
-      this.prisma.apiKey.findMany({
-        where,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        skip: offsetFor(page, size),
-        take: size,
-        select: API_KEY_LIST_SELECT,
-      }),
-      this.prisma.apiKey.count({ where }),
+    const [models, totalElements] = await Promise.all([
+      this.apiKeysRepository.search(where, offsetFor(page, size), size),
+      this.apiKeysRepository.count(where),
     ]);
 
-    return buildSearchResponse(rows, totalElements, page, size);
+    return buildSearchResponse(
+      models.map(ApiKeysMapper.toSearchResultDto),
+      totalElements,
+      page,
+      size,
+    );
   }
 
   /** Soft-delete: marca revokedAt en vez de borrar la fila (se conserva el historial de uso). */
   async delete(userId: string, id: string): Promise<void> {
-    const apiKey = await this.prisma.apiKey.findUnique({ where: { id } });
-    if (!apiKey || apiKey.userId !== userId) {
-      throw new NotFoundException('api_key_not_found');
-    }
-    if (apiKey.revokedAt) {
+    const model = await this.findOwnedOrThrow(userId, id);
+    if (model.revokedAt) {
       return; // idempotente: revocar dos veces no es un error
     }
-    await this.prisma.apiKey.update({
-      where: { id },
-      data: { revokedAt: new Date() },
-    });
+    await this.apiKeysRepository.revoke(id);
+  }
+
+  /**
+   * Usado por ApiKeyAuthGuard — nunca debe tocar ApiKeysRepository/Prisma directo.
+   * Hashea, busca, valida que no esté revocada, y actualiza lastUsedAt.
+   */
+  async validateAndTouch(rawKey: string): Promise<{ userId: string } | null> {
+    const model = await this.apiKeysRepository.findByHash(hashKey(rawKey));
+    if (!model || model.revokedAt) {
+      return null;
+    }
+    await this.apiKeysRepository.touchLastUsed(model.id);
+    return { userId: model.userId };
+  }
+
+  private async findOwnedOrThrow(
+    userId: string,
+    id: string,
+  ): Promise<ApiKeyModel> {
+    const model = await this.apiKeysRepository.findById(id);
+    if (!model || model.userId !== userId) {
+      throw new NotFoundException('api_key_not_found');
+    }
+    return model;
   }
 }
 

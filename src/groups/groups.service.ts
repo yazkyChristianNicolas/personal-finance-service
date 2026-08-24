@@ -3,12 +3,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateGroupDto } from './dto/create-group.dto';
+import { GroupsRepository } from './groups.repository';
+import { GroupsMapper } from './groups.mapper';
+import { GroupModel } from './model/group.model';
+import { CreateGroupDto } from './dto/request/create-group.dto';
+import { GroupResponseDto } from './dto/response/group-response.dto';
 import {
   GroupMemberSearchResultDto,
   GroupSearchResultDto,
-} from './dto/group-search-result.dto';
+} from './dto/response/group-search-result.dto';
 import {
   buildSearchResponse,
   GenericSearchResponse,
@@ -19,22 +22,12 @@ import {
 
 @Injectable()
 export class GroupsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly groupsRepository: GroupsRepository) {}
 
   /** Crea el grupo "Personal" del usuario si todavía no lo tiene. Idempotente. */
   async ensurePersonalGroupFor(userId: string): Promise<void> {
-    const existing = await this.prisma.groupMember.findFirst({
-      where: { userId, group: { isDefault: true } },
-    });
-    if (existing) return;
-
-    await this.prisma.group.create({
-      data: {
-        name: 'Personal',
-        isDefault: true,
-        members: { create: { userId, role: 'OWNER' } },
-      },
-    });
+    if (await this.groupsRepository.hasDefaultGroup(userId)) return;
+    await this.groupsRepository.createWithOwner('Personal', true, userId);
   }
 
   async search(
@@ -45,48 +38,47 @@ export class GroupsService {
     const size = normalizeSize(params.size);
     const where = { members: { some: { userId } } };
 
-    const [rows, totalElements] = await Promise.all([
-      this.prisma.group.findMany({
-        where,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        skip: offsetFor(page, size),
-        take: size,
-      }),
-      this.prisma.group.count({ where }),
+    const [models, totalElements] = await Promise.all([
+      this.groupsRepository.search(where, offsetFor(page, size), size),
+      this.groupsRepository.count(where),
     ]);
 
-    const data: GroupSearchResultDto[] = rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      isDefault: row.isDefault,
-    }));
-    return buildSearchResponse(data, totalElements, page, size);
+    return buildSearchResponse(
+      models.map(GroupsMapper.toSearchResultDto),
+      totalElements,
+      page,
+      size,
+    );
   }
 
-  async create(userId: string, dto: CreateGroupDto) {
-    return this.prisma.group.create({
-      data: {
-        name: dto.name,
-        members: { create: { userId, role: 'OWNER' } },
-      },
-    });
+  async create(userId: string, dto: CreateGroupDto): Promise<GroupResponseDto> {
+    const model = await this.groupsRepository.createWithOwner(
+      dto.name,
+      false,
+      userId,
+    );
+    return GroupsMapper.toResponseDto(model);
   }
 
   /** Lanza 404 si el grupo no existe, 403 si existe pero el usuario no es miembro. */
   async assertMembership(userId: string, groupId: string): Promise<void> {
-    const group = await this.prisma.group.findUnique({
-      where: { id: groupId },
-      select: {
-        id: true,
-        members: { where: { userId }, select: { id: true } },
-      },
-    });
-    if (!group) {
+    const { exists, isMember } =
+      await this.groupsRepository.findByIdWithMembership(groupId, userId);
+    if (!exists) {
       throw new NotFoundException('group_not_found');
     }
-    if (group.members.length === 0) {
+    if (!isMember) {
       throw new ForbiddenException('not_a_group_member');
     }
+  }
+
+  /** Uso interno entre servicios (ej. ExpensesService quiere saber si el grupo es el Personal). */
+  async findById(groupId: string): Promise<GroupModel> {
+    const model = await this.groupsRepository.findById(groupId);
+    if (!model) {
+      throw new NotFoundException('group_not_found');
+    }
+    return model;
   }
 
   async searchMembers(
@@ -98,37 +90,27 @@ export class GroupsService {
 
     const page = normalizePage(params.page);
     const size = normalizeSize(params.size);
-    const where = { groupId };
 
-    const [rows, totalElements] = await Promise.all([
-      this.prisma.groupMember.findMany({
-        where,
-        include: {
-          user: { select: { id: true, email: true, displayName: true } },
-        },
-        orderBy: { id: 'asc' },
-        skip: offsetFor(page, size),
-        take: size,
-      }),
-      this.prisma.groupMember.count({ where }),
+    const [models, totalElements] = await Promise.all([
+      this.groupsRepository.searchMembers(groupId, offsetFor(page, size), size),
+      this.groupsRepository.countMembers(groupId),
     ]);
 
-    const data: GroupMemberSearchResultDto[] = rows.map((row) => ({
-      id: row.id,
-      userId: row.userId,
-      role: row.role,
-      email: row.user.email,
-      displayName: row.user.displayName,
-    }));
-    return buildSearchResponse(data, totalElements, page, size);
+    return buildSearchResponse(
+      models.map(GroupsMapper.toMemberSearchResultDto),
+      totalElements,
+      page,
+      size,
+    );
   }
 
-  /** Grupos donde el usuario es miembro — usado para filtrar implícitamente GET /expenses (regla 226). */
-  async getMemberGroupIds(userId: string): Promise<string[]> {
-    const memberships = await this.prisma.groupMember.findMany({
-      where: { userId },
-      select: { groupId: true },
-    });
-    return memberships.map((m) => m.groupId);
+  /** Grupos donde el usuario es miembro — usado por ExpensesService para filtrar implícitamente GET /expenses (regla 226). */
+  getMemberGroupIds(userId: string): Promise<string[]> {
+    return this.groupsRepository.getMemberGroupIds(userId);
+  }
+
+  /** Miembros de un grupo — usado por ExpensesService para calcular splits. Nunca deben tocar GroupsRepository directo. */
+  getMemberUserIds(groupId: string): Promise<string[]> {
+    return this.groupsRepository.getMemberUserIds(groupId);
   }
 }
