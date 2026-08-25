@@ -1,5 +1,5 @@
 import { ExpensesMapper, ExpenseRowWithSplits } from './expenses.mapper';
-import { ExpenseSplit } from '../../generated/prisma/client';
+import { ExpenseSplit, InstallmentPlan } from '../../generated/prisma/client';
 
 const SPLIT_ROW: ExpenseSplit = {
   id: 'split-1',
@@ -7,6 +7,16 @@ const SPLIT_ROW: ExpenseSplit = {
   userId: 'user-1',
   amount: 500,
   percentage: null,
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+};
+
+const INSTALLMENT_PLAN_ROW: InstallmentPlan = {
+  id: 'plan-1',
+  paymentMethodId: 'pm-1',
+  totalAmount: 1000,
+  installmentsCount: 3,
+  currentInstallment: 1,
+  completed: false,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
 };
 
@@ -23,8 +33,10 @@ const EXPENSE_ROW: ExpenseRowWithSplits = {
   isRecurring: false,
   recurringTemplateId: null,
   installmentPlanId: null,
+  installmentNumber: null,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   splits: [SPLIT_ROW],
+  installmentPlan: null,
 };
 
 describe('ExpensesMapper', () => {
@@ -71,5 +83,38 @@ describe('ExpensesMapper', () => {
       category: 'groceries',
       groupId: 'group-1',
     });
+  });
+
+  it('toModel deja los campos de cuotas en null si no hay installmentPlan', () => {
+    const model = ExpensesMapper.toModel(EXPENSE_ROW);
+    expect(model.installmentNumber).toBeNull();
+    expect(model.installmentsCount).toBeNull();
+    expect(model.installmentsTotalAmount).toBeNull();
+  });
+
+  it('toModel denormaliza installmentsCount/installmentsTotalAmount desde el plan incluido', () => {
+    const model = ExpensesMapper.toModel({
+      ...EXPENSE_ROW,
+      installmentPlanId: 'plan-1',
+      installmentNumber: 2,
+      installmentPlan: INSTALLMENT_PLAN_ROW,
+    });
+    expect(model.installmentNumber).toBe(2);
+    expect(model.installmentsCount).toBe(3);
+    expect(model.installmentsTotalAmount).toBe(1000);
+  });
+
+  it('toInstallmentPlanModel mapea la fila del plan', () => {
+    expect(ExpensesMapper.toInstallmentPlanModel(INSTALLMENT_PLAN_ROW)).toEqual(
+      {
+        id: 'plan-1',
+        paymentMethodId: 'pm-1',
+        totalAmount: 1000,
+        installmentsCount: 3,
+        currentInstallment: 1,
+        completed: false,
+        createdAt: INSTALLMENT_PLAN_ROW.createdAt,
+      },
+    );
   });
 });

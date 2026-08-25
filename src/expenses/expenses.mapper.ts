@@ -1,5 +1,10 @@
-import { Expense, ExpenseSplit } from '../../generated/prisma/client';
+import {
+  Expense,
+  ExpenseSplit,
+  InstallmentPlan,
+} from '../../generated/prisma/client';
 import { ExpenseModel, ExpenseSplitModel } from './model/expense.model';
+import { InstallmentPlanModel } from './model/installment-plan.model';
 import {
   ExpenseResponseDto,
   ExpenseSplitResponseDto,
@@ -8,6 +13,7 @@ import { ExpenseSearchResultDto } from './dto/response/expense-search-result.dto
 
 export interface ExpenseRowWithSplits extends Expense {
   splits: ExpenseSplit[];
+  installmentPlan: InstallmentPlan | null;
 }
 
 /** Métodos estáticos y sin estado: fila Prisma <-> Model <-> DTOs de respuesta. */
@@ -26,8 +32,26 @@ export class ExpensesMapper {
       isRecurring: row.isRecurring,
       recurringTemplateId: row.recurringTemplateId,
       installmentPlanId: row.installmentPlanId,
+      installmentNumber: row.installmentNumber,
+      installmentsCount: row.installmentPlan?.installmentsCount ?? null,
+      installmentsTotalAmount: row.installmentPlan?.totalAmount ?? null,
       createdAt: row.createdAt,
       splits: row.splits.map(ExpensesMapper.toSplitModel),
+    };
+  }
+
+  static toInstallmentPlanModel(
+    this: void,
+    row: InstallmentPlan,
+  ): InstallmentPlanModel {
+    return {
+      id: row.id,
+      paymentMethodId: row.paymentMethodId,
+      totalAmount: row.totalAmount,
+      installmentsCount: row.installmentsCount,
+      currentInstallment: row.currentInstallment,
+      completed: row.completed,
+      createdAt: row.createdAt,
     };
   }
 
@@ -41,7 +65,7 @@ export class ExpensesMapper {
     };
   }
 
-  static toResponseDto(model: ExpenseModel): ExpenseResponseDto {
+  static toResponseDto(this: void, model: ExpenseModel): ExpenseResponseDto {
     return {
       ...model,
       splits: model.splits.map(ExpensesMapper.toSplitResponseDto),

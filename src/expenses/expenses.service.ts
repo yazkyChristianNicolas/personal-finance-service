@@ -6,13 +6,16 @@ import {
 import { ExpensesRepository } from './expenses.repository';
 import { ExpensesMapper } from './expenses.mapper';
 import { ExpenseModel } from './model/expense.model';
+import { GroupModel } from '../groups/model/group.model';
 import { GroupsService } from '../groups/groups.service';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
 import { CreateExpenseDto } from './dto/request/create-expense.dto';
 import { UpdateExpenseDto } from './dto/request/update-expense.dto';
 import { QueryExpensesDto } from './dto/request/query-expenses.dto';
+import { CloseCycleDto } from './dto/request/close-cycle.dto';
 import { ExpenseResponseDto } from './dto/response/expense-response.dto';
 import { ExpenseSearchResultDto } from './dto/response/expense-search-result.dto';
+import { CloseCycleResponseDto } from './dto/response/close-cycle-response.dto';
 import { SplitStrategy } from '../../generated/prisma/enums';
 import {
   buildSearchResponse,
@@ -47,6 +50,11 @@ export class ExpensesService {
     );
 
     const group = await this.groupsService.findById(dto.groupId);
+
+    if (dto.installmentsCount) {
+      return this.createWithInstallments(userId, dto, group);
+    }
+
     const splits = group.isDefault ? [] : await this.buildSplits(dto);
 
     // createdAt siempre queda seteado por Prisma (@default(now())), no hace falta pasarlo.
@@ -62,6 +70,119 @@ export class ExpensesService {
       splits,
     });
     return ExpensesMapper.toResponseDto(model);
+  }
+
+  /**
+   * `dto.amount` es el TOTAL de la compra acá, no el monto de este registro —
+   * el monto que se persiste (y se splittea) es la primera cuota
+   * (`total / installmentsCount`, redondeada hacia abajo; la última cuota,
+   * generada por closeCycle, absorbe el resto).
+   */
+  private async createWithInstallments(
+    userId: string,
+    dto: CreateExpenseDto,
+    group: GroupModel,
+  ): Promise<ExpenseResponseDto> {
+    const totalAmount = dto.amount;
+    const installmentsCount = dto.installmentsCount!;
+    const firstAmount = this.computeInstallmentAmount(
+      totalAmount,
+      installmentsCount,
+      1,
+    );
+    if (firstAmount < 1) {
+      throw new BadRequestException('installments_count_too_high_for_amount');
+    }
+
+    const plan = await this.expensesRepository.createInstallmentPlan({
+      paymentMethodId: dto.paymentMethodId,
+      totalAmount,
+      installmentsCount,
+    });
+
+    const splits = group.isDefault
+      ? []
+      : await this.buildSplits({ ...dto, amount: firstAmount });
+
+    const model = await this.expensesRepository.create({
+      date: new Date(dto.date),
+      amount: firstAmount,
+      currency: dto.currency,
+      description: dto.description,
+      category: dto.category,
+      groupId: dto.groupId,
+      paymentMethodId: dto.paymentMethodId,
+      createdByUserId: userId,
+      installmentPlanId: plan.id,
+      installmentNumber: 1,
+      splits,
+    });
+    return ExpensesMapper.toResponseDto(model);
+  }
+
+  /**
+   * Genera la cuota siguiente de cada InstallmentPlan activo de una tarjeta CREDIT
+   * cuando corta su ciclo. Disparo manual (POST /expenses/close-cycle) — no hay
+   * cron/scheduler todavía, así que no es idempotente: llamarlo dos veces en el
+   * mismo ciclo genera dos cuotas para el mismo período.
+   */
+  async closeCycle(
+    userId: string,
+    dto: CloseCycleDto,
+  ): Promise<CloseCycleResponseDto> {
+    await this.paymentMethodsService.assertIsCreditOwnedByUser(
+      dto.paymentMethodId,
+      userId,
+    );
+
+    const activePlans =
+      await this.expensesRepository.findActiveInstallmentPlans(
+        dto.paymentMethodId,
+      );
+
+    const generated: ExpenseModel[] = [];
+    for (const plan of activePlans) {
+      const sourceExpense =
+        await this.expensesRepository.findLatestByInstallmentPlanId(plan.id);
+      if (!sourceExpense) continue; // no debería pasar, pero no hay de dónde clonar
+
+      const nextInstallmentNumber = plan.currentInstallment + 1;
+      const nextAmount = this.computeInstallmentAmount(
+        plan.totalAmount,
+        plan.installmentsCount,
+        nextInstallmentNumber,
+      );
+      const splits = this.scaleSplits(
+        sourceExpense.splits,
+        sourceExpense.amount,
+        nextAmount,
+      );
+
+      const newExpense = await this.expensesRepository.create({
+        date: new Date(),
+        amount: nextAmount,
+        currency: sourceExpense.currency,
+        description: sourceExpense.description,
+        category: sourceExpense.category,
+        groupId: sourceExpense.groupId,
+        paymentMethodId: sourceExpense.paymentMethodId,
+        createdByUserId: sourceExpense.createdByUserId,
+        installmentPlanId: plan.id,
+        installmentNumber: nextInstallmentNumber,
+        splits,
+      });
+
+      await this.expensesRepository.advanceInstallmentPlan(
+        plan.id,
+        nextInstallmentNumber,
+        nextInstallmentNumber >= plan.installmentsCount,
+      );
+      generated.push(newExpense);
+    }
+
+    return {
+      generatedExpenses: generated.map(ExpensesMapper.toResponseDto),
+    };
   }
 
   async search(
@@ -108,6 +229,12 @@ export class ExpensesService {
     dto: UpdateExpenseDto,
   ): Promise<ExpenseResponseDto> {
     const expense = await this.getModelOrThrow(userId, id);
+
+    if (dto.amount !== undefined && expense.installmentPlanId) {
+      throw new BadRequestException(
+        'cannot_patch_amount_of_installment_expense',
+      );
+    }
 
     if (dto.paymentMethodId) {
       await this.paymentMethodsService.assertOwnedByUser(
@@ -245,6 +372,39 @@ export class ExpensesService {
       userId: m.userId,
       amount: m.amount ?? 0,
     }));
+  }
+
+  /** installmentNumber es 1-indexed; la última cuota absorbe el resto de la división. */
+  private computeInstallmentAmount(
+    totalAmount: number,
+    installmentsCount: number,
+    installmentNumber: number,
+  ): number {
+    const base = Math.floor(totalAmount / installmentsCount);
+    if (installmentNumber < installmentsCount) {
+      return base;
+    }
+    return totalAmount - base * (installmentsCount - 1);
+  }
+
+  /** Reescala splits existentes a un nuevo monto total, preservando sus proporciones. */
+  private scaleSplits(
+    originalSplits: {
+      userId: string;
+      amount: number;
+      percentage: number | null;
+    }[],
+    originalAmount: number,
+    newAmount: number,
+  ): ComputedSplit[] {
+    if (originalSplits.length === 0) return [];
+
+    const provisional = originalSplits.map((s) => ({
+      userId: s.userId,
+      percentage: s.percentage ?? undefined,
+      amount: Math.floor((s.amount * newAmount) / originalAmount),
+    }));
+    return this.reconcileRoundingRemainder(provisional, newAmount);
   }
 
   /** Ajusta centavos de redondeo (percentage->amount) para que la suma cierre exacto. */

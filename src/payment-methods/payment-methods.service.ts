@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PaymentMethodsRepository } from './payment-methods.repository';
 import { PaymentMethodsMapper } from './payment-methods.mapper';
 import { PaymentMethodModel } from './model/payment-method.model';
@@ -90,6 +94,17 @@ export class PaymentMethodsService {
     userId: string,
   ): Promise<void> {
     await this.findOwnedOrThrow(userId, paymentMethodId);
+  }
+
+  /** Usado por ExpensesService (cierre de ciclo) — las cuotas solo aplican a tarjetas CREDIT. */
+  async assertIsCreditOwnedByUser(
+    paymentMethodId: string,
+    userId: string,
+  ): Promise<void> {
+    const model = await this.findOwnedOrThrow(userId, paymentMethodId);
+    if (model.type !== PaymentMethodType.CREDIT) {
+      throw new BadRequestException('payment_method_is_not_credit');
+    }
   }
 
   private async findOwnedOrThrow(

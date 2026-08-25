@@ -38,7 +38,10 @@ function fakeCreate(data: CreateExpenseData): Promise<ExpenseModel> {
     createdByUserId: data.createdByUserId,
     isRecurring: false,
     recurringTemplateId: null,
-    installmentPlanId: null,
+    installmentPlanId: data.installmentPlanId ?? null,
+    installmentNumber: data.installmentNumber ?? null,
+    installmentsCount: null,
+    installmentsTotalAmount: null,
     createdAt: new Date('2026-01-01'),
     splits: data.splits.map((s, index) => ({
       id: `split-${index}`,
@@ -59,6 +62,10 @@ describe('ExpensesService', () => {
     findById: jest.Mock;
     update: jest.Mock;
     delete: jest.Mock;
+    createInstallmentPlan: jest.Mock;
+    findActiveInstallmentPlans: jest.Mock;
+    advanceInstallmentPlan: jest.Mock;
+    findLatestByInstallmentPlanId: jest.Mock;
   };
   let groupsService: {
     assertMembership: jest.Mock;
@@ -66,7 +73,10 @@ describe('ExpensesService', () => {
     getMemberUserIds: jest.Mock;
     getMemberGroupIds: jest.Mock;
   };
-  let paymentMethodsService: { assertOwnedByUser: jest.Mock };
+  let paymentMethodsService: {
+    assertOwnedByUser: jest.Mock;
+    assertIsCreditOwnedByUser: jest.Mock;
+  };
 
   beforeEach(async () => {
     expensesRepository = {
@@ -78,6 +88,10 @@ describe('ExpensesService', () => {
       findById: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      createInstallmentPlan: jest.fn(),
+      findActiveInstallmentPlans: jest.fn(),
+      advanceInstallmentPlan: jest.fn(),
+      findLatestByInstallmentPlanId: jest.fn(),
     };
     groupsService = {
       assertMembership: jest.fn().mockResolvedValue(undefined),
@@ -87,6 +101,7 @@ describe('ExpensesService', () => {
     };
     paymentMethodsService = {
       assertOwnedByUser: jest.fn().mockResolvedValue(undefined),
+      assertIsCreditOwnedByUser: jest.fn().mockResolvedValue(undefined),
     };
 
     const module = await Test.createTestingModule({
@@ -238,6 +253,9 @@ describe('ExpensesService', () => {
       isRecurring: false,
       recurringTemplateId: null,
       installmentPlanId: null,
+      installmentNumber: null,
+      installmentsCount: null,
+      installmentsTotalAmount: null,
       createdAt: new Date('2026-01-01'),
       splits: [],
     };
@@ -288,6 +306,9 @@ describe('ExpensesService', () => {
       isRecurring: false,
       recurringTemplateId: null,
       installmentPlanId: null,
+      installmentNumber: null,
+      installmentsCount: null,
+      installmentsTotalAmount: null,
       createdAt: new Date('2026-01-01'),
       splits: [],
     };
@@ -324,6 +345,9 @@ describe('ExpensesService', () => {
       isRecurring: false,
       recurringTemplateId: null,
       installmentPlanId: null,
+      installmentNumber: null,
+      installmentsCount: null,
+      installmentsTotalAmount: null,
       createdAt: new Date('2026-01-01'),
       splits: [],
     };
@@ -355,6 +379,187 @@ describe('ExpensesService', () => {
       });
       expect(result.description).toBe('actualizado');
     });
+
+    it('rechaza cambiar el amount de un expense en cuotas', async () => {
+      expensesRepository.findById.mockResolvedValue({
+        ...EXPENSE_MODEL,
+        installmentPlanId: 'plan-1',
+      });
+      await expect(
+        service.patch(USER_ID, 'expense-1', { amount: 500 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(expensesRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createWithInstallments', () => {
+    beforeEach(() => {
+      groupsService.findById.mockResolvedValue({
+        id: GROUP_ID,
+        isDefault: true,
+      });
+      expensesRepository.createInstallmentPlan.mockResolvedValue({
+        id: 'plan-1',
+        paymentMethodId: PAYMENT_METHOD_ID,
+        totalAmount: 1000,
+        installmentsCount: 3,
+        currentInstallment: 1,
+        completed: false,
+        createdAt: new Date('2026-01-01'),
+      });
+    });
+
+    it('crea el plan y persiste la primera cuota (total/cuotas, redondeada hacia abajo)', async () => {
+      const result = await service.create(
+        USER_ID,
+        baseDto({ amount: 1000, installmentsCount: 3 }),
+      );
+
+      expect(expensesRepository.createInstallmentPlan).toHaveBeenCalledWith({
+        paymentMethodId: PAYMENT_METHOD_ID,
+        totalAmount: 1000,
+        installmentsCount: 3,
+      });
+      const [createData] = expensesRepository.create.mock.calls[0];
+      expect(createData.amount).toBe(333);
+      expect(createData.installmentPlanId).toBe('plan-1');
+      expect(createData.installmentNumber).toBe(1);
+      expect(result.amount).toBe(333);
+    });
+
+    it('rechaza cuando el total no alcanza para que cada cuota sea >= 1', async () => {
+      await expect(
+        service.create(USER_ID, baseDto({ amount: 2, installmentsCount: 5 })),
+      ).rejects.toThrow(BadRequestException);
+      expect(expensesRepository.createInstallmentPlan).not.toHaveBeenCalled();
+    });
+
+    it('reescala los splits al monto de la cuota, no al total', async () => {
+      groupsService.findById.mockResolvedValue({
+        id: GROUP_ID,
+        isDefault: false,
+      });
+      groupsService.getMemberUserIds.mockResolvedValue(['a', 'b', 'c']);
+
+      const result = await service.create(
+        USER_ID,
+        baseDto({
+          amount: 1000,
+          installmentsCount: 3,
+          splitStrategy: 'EQUAL' as CreateExpenseDto['splitStrategy'],
+        }),
+      );
+
+      expect(result.splits.reduce((sum, s) => sum + s.amount, 0)).toBe(333);
+    });
+  });
+
+  describe('closeCycle', () => {
+    const ACTIVE_PLAN = {
+      id: 'plan-1',
+      paymentMethodId: PAYMENT_METHOD_ID,
+      totalAmount: 1000,
+      installmentsCount: 3,
+      currentInstallment: 1,
+      completed: false,
+      createdAt: new Date('2026-01-01'),
+    };
+    const SOURCE_EXPENSE: ExpenseModel = {
+      id: 'expense-1',
+      date: new Date('2026-01-01'),
+      amount: 333,
+      currency: 'ARS',
+      description: 'compra en cuotas',
+      category: 'shopping',
+      groupId: GROUP_ID,
+      paymentMethodId: PAYMENT_METHOD_ID,
+      createdByUserId: USER_ID,
+      isRecurring: false,
+      recurringTemplateId: null,
+      installmentPlanId: 'plan-1',
+      installmentNumber: 1,
+      installmentsCount: 3,
+      installmentsTotalAmount: 1000,
+      createdAt: new Date('2026-01-01'),
+      splits: [
+        {
+          id: 's1',
+          expenseId: 'expense-1',
+          userId: 'a',
+          amount: 167,
+          percentage: null,
+        },
+        {
+          id: 's2',
+          expenseId: 'expense-1',
+          userId: 'b',
+          amount: 166,
+          percentage: null,
+        },
+      ],
+    };
+
+    it('valida que la tarjeta sea CREDIT y del usuario', async () => {
+      expensesRepository.findActiveInstallmentPlans.mockResolvedValue([]);
+      await service.closeCycle(USER_ID, { paymentMethodId: PAYMENT_METHOD_ID });
+      expect(
+        paymentMethodsService.assertIsCreditOwnedByUser,
+      ).toHaveBeenCalledWith(PAYMENT_METHOD_ID, USER_ID);
+    });
+
+    it('sin planes activos, no genera nada', async () => {
+      expensesRepository.findActiveInstallmentPlans.mockResolvedValue([]);
+      const result = await service.closeCycle(USER_ID, {
+        paymentMethodId: PAYMENT_METHOD_ID,
+      });
+      expect(result.generatedExpenses).toEqual([]);
+      expect(expensesRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('genera la cuota siguiente reescalando los splits y avanza el plan', async () => {
+      expensesRepository.findActiveInstallmentPlans.mockResolvedValue([
+        ACTIVE_PLAN,
+      ]);
+      expensesRepository.findLatestByInstallmentPlanId.mockResolvedValue(
+        SOURCE_EXPENSE,
+      );
+
+      const result = await service.closeCycle(USER_ID, {
+        paymentMethodId: PAYMENT_METHOD_ID,
+      });
+
+      const [createData] = expensesRepository.create.mock.calls[0];
+      expect(createData.amount).toBe(333);
+      expect(createData.installmentNumber).toBe(2);
+      expect(createData.splits.reduce((sum, s) => sum + s.amount, 0)).toBe(333);
+      expect(expensesRepository.advanceInstallmentPlan).toHaveBeenCalledWith(
+        'plan-1',
+        2,
+        false,
+      );
+      expect(result.generatedExpenses).toHaveLength(1);
+    });
+
+    it('marca el plan completed en la última cuota', async () => {
+      expensesRepository.findActiveInstallmentPlans.mockResolvedValue([
+        { ...ACTIVE_PLAN, currentInstallment: 2 },
+      ]);
+      expensesRepository.findLatestByInstallmentPlanId.mockResolvedValue({
+        ...SOURCE_EXPENSE,
+        installmentNumber: 2,
+      });
+
+      await service.closeCycle(USER_ID, { paymentMethodId: PAYMENT_METHOD_ID });
+
+      const [createData] = expensesRepository.create.mock.calls[0];
+      expect(createData.installmentNumber).toBe(3);
+      expect(createData.amount).toBe(334); // última cuota absorbe el resto (1000 - 333*2)
+      expect(expensesRepository.advanceInstallmentPlan).toHaveBeenCalledWith(
+        'plan-1',
+        3,
+        true,
+      );
+    });
   });
 
   describe('delete', () => {
@@ -371,6 +576,9 @@ describe('ExpensesService', () => {
       isRecurring: false,
       recurringTemplateId: null,
       installmentPlanId: null,
+      installmentNumber: null,
+      installmentsCount: null,
+      installmentsTotalAmount: null,
       createdAt: new Date('2026-01-01'),
       splits: [],
     };

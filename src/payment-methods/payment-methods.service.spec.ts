@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PaymentMethodsService } from './payment-methods.service';
 import { PaymentMethodsRepository } from './payment-methods.repository';
 
@@ -166,6 +166,29 @@ describe('PaymentMethodsService', () => {
       repository.findById.mockResolvedValue(CASH_MODEL);
       await expect(
         service.assertOwnedByUser('pm-1', 'user-1'),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('assertIsCreditOwnedByUser', () => {
+    it('lanza 404 si no es del usuario (usado por ExpensesService.closeCycle)', async () => {
+      repository.findById.mockResolvedValue(null);
+      await expect(
+        service.assertIsCreditOwnedByUser('pm-1', 'user-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza 400 si no es CREDIT', async () => {
+      repository.findById.mockResolvedValue(CASH_MODEL);
+      await expect(
+        service.assertIsCreditOwnedByUser('pm-1', 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('no lanza nada si es CREDIT y del usuario', async () => {
+      repository.findById.mockResolvedValue(CREDIT_MODEL);
+      await expect(
+        service.assertIsCreditOwnedByUser('pm-2', 'user-1'),
       ).resolves.toBeUndefined();
     });
   });

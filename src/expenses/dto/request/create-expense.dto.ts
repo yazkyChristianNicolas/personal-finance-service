@@ -54,4 +54,16 @@ export class CreateExpenseDto {
   @ValidateNested({ each: true })
   @Type(() => ExpenseSplitMemberDto)
   splitMembers?: ExpenseSplitMemberDto[];
+
+  /**
+   * Si está presente, `amount` deja de ser el monto de este gasto y pasa a
+   * representar el TOTAL de la compra en cuotas — el monto que efectivamente
+   * se persiste (y se splittea, si aplica) es `total / installmentsCount`
+   * (la última cuota absorbe el resto si no divide exacto). Ver
+   * ExpensesService.createWithInstallments.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  installmentsCount?: number;
 }

@@ -20,6 +20,9 @@ export interface ExpenseResponseDto {
   isRecurring: boolean;
   recurringTemplateId: string | null;
   installmentPlanId: string | null;
+  installmentNumber: number | null;
+  installmentsCount: number | null;
+  installmentsTotalAmount: number | null;
   createdAt: Date;
   splits: ExpenseSplitResponseDto[];
 }

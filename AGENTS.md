@@ -70,6 +70,15 @@ curl examples) is in `README.md`.
   `prisma/schema.prisma`. Don't add an index reflexively for a new filter
   field, and don't strip one without checking why it's there first (some
   exist for FK constraint performance, not search).
+- **Installments (cuotas)**: `POST /expenses` with `installments_count` treats
+  `amount` as the TOTAL purchase price, not the amount of that one row — the
+  persisted/splittable amount is `total / installments_count` (last
+  installment absorbs the rounding remainder). `POST /expenses/close-cycle`
+  (body: `payment_method_id`) manually advances every active `InstallmentPlan`
+  of a CREDIT card to its next installment, cloning the group/splits of the
+  latest generated expense. See "Non-obvious decisions" for the module-cycle
+  reason this endpoint lives on `ExpensesController` and not
+  `PaymentMethodsController`.
 
 ## Non-obvious decisions (and why)
 
@@ -128,13 +137,28 @@ curl examples) is in `README.md`.
   is 80 in `package.json`; `prisma/prisma.service.ts` is excluded from
   `collectCoverageFrom` since it just wires up the real `PrismaClient`'s
   `$connect`/`$disconnect` lifecycle — not meaningfully unit-testable.
+- **`POST /expenses/close-cycle` lives on `ExpensesController`, not
+  `PaymentMethodsController`**, even though closing a card's billing cycle
+  reads as a payment-methods action — `ExpensesModule` already imports
+  `PaymentMethodsModule` (for ownership checks), so a `PaymentMethodsService`
+  calling back into `ExpensesService` would create a circular module
+  dependency. Putting the endpoint where the dependency already points one
+  way avoids that; it's a deliberate exception to `crud-controller-conventions`
+  naming (not a CRUD verb).
+- **Installments are 100% manual right now** — `close-cycle` has no
+  cron/scheduler triggering it and no idempotency guard against being called
+  twice in the same billing cycle (each call unconditionally advances every
+  active plan by one installment). Revisit once there's an automated trigger
+  (Phase 2's originally-planned cron).
 
 ## Known gaps (deliberately out of scope right now)
 
 - `POST /groups/:id/invite` — not implemented; the spec leaves the invite
   mechanism (email invite vs. direct lookup) as an open decision.
-- `isRecurring`/`installments` are not wired into `POST /expenses`'s body yet —
-  land with the `recurring-expenses` module (Phase 2).
+- `isRecurring` (fixed recurring expenses like rent/school — same amount every
+  cycle) is still not wired into `POST /expenses`'s body — that's the
+  `recurring-expenses` module, a different feature from installments
+  (`installments_count`, wired in) and not yet built.
 - Phase 2 (`recurring-expenses` + monthly cron), Phase 3 (`card-statements` +
   matching), Phase 4 (standalone MCP server) are not built.
 

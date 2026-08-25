@@ -82,6 +82,7 @@ model PaymentMethod {
   expenses           Expense[]
   recurringTemplates RecurringTemplate[]
   cardStatements     CardStatement[]
+  installmentPlans   InstallmentPlan[]
 
   @@index([userId]) // GET /payment-methods: único filtro de search()
   @@map("payment_methods")
@@ -100,6 +101,7 @@ model Expense {
   isRecurring         Boolean  @default(false)
   recurringTemplateId String?
   installmentPlanId   String?
+  installmentNumber   Int? // cuota puntual que representa esta fila (1-indexed), solo si installmentPlanId != null
   createdAt           DateTime @default(now())
 
   group                Group              @relation(fields: [groupId], references: [id], onDelete: Restrict)
@@ -171,13 +173,21 @@ model RecurringTemplate {
 }
 
 model InstallmentPlan {
-  id                 String @id @default(uuid())
+  id                 String   @id @default(uuid())
+  paymentMethodId    String
   totalAmount        Int
   installmentsCount  Int
-  currentInstallment Int    @default(1)
+  currentInstallment Int      @default(1)
+  completed          Boolean  @default(false) // true cuando currentInstallment llega a installmentsCount
+  createdAt          DateTime @default(now())
 
-  expenses Expense[]
+  paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: Restrict)
+  expenses      Expense[]
 
+  // POST /expenses/close-cycle filtra los planes activos de una tarjeta (paymentMethodId +
+  // completed=false). paymentMethodId está denormalizado acá a propósito (en vez de salir por
+  // Expense y agrupar) precisamente para que este filtro sea directo e indexable.
+  @@index([paymentMethodId])
   @@map("installment_plans")
 }
 

@@ -451,6 +451,56 @@
           }
         },
         {
+          "name": "Create Expense (Cuotas)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.id) {",
+                  "    pm.collectionVariables.set('expense_id', body.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-08-20\",\n  \"amount\": 300000,\n  \"currency\": \"ARS\",\n  \"description\": \"Notebook en cuotas\",\n  \"category\": \"tech\",\n  \"group_id\": \"{{personal_group_id}}\",\n  \"payment_method_id\": \"{{payment_method_id}}\",\n  \"installments_count\": 3\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/expenses",
+              "host": ["{{base_url}}"],
+              "path": ["expenses"]
+            },
+            "description": "Con installments_count presente, `amount` pasa a ser el TOTAL de la compra, no el monto de este registro — el monto persistido es total/cuotas (300000/3 = 100000 por cuota); la respuesta incluye installment_number/installments_count/installments_total_amount. `payment_method_id` debe ser una tarjeta CREDIT. La cuota siguiente se genera con 'Close Cycle (Payment Method)' cuando corta el ciclo de la tarjeta."
+          }
+        },
+        {
+          "name": "Close Cycle (Payment Method)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_method_id\": \"{{payment_method_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/expenses/close-cycle",
+              "host": ["{{base_url}}"],
+              "path": ["expenses", "close-cycle"]
+            },
+            "description": "Disparo MANUAL del cierre de ciclo de una tarjeta CREDIT: genera la cuota siguiente de cada InstallmentPlan activo de esa tarjeta (la última cuota absorbe el resto de la división). No es idempotente todavía — llamarlo dos veces en el mismo ciclo genera dos cuotas. 400 si la tarjeta no es CREDIT o no es del usuario."
+          }
+        },
+        {
           "name": "Find Expense by ID",
           "request": {
             "method": "GET",

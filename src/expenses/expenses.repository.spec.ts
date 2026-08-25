@@ -22,8 +22,20 @@ const EXPENSE_ROW = {
   isRecurring: false,
   recurringTemplateId: null,
   installmentPlanId: null,
+  installmentNumber: null,
   createdAt: new Date('2026-01-01'),
   splits: [SPLIT_ROW],
+  installmentPlan: null,
+};
+
+const INSTALLMENT_PLAN_ROW = {
+  id: 'plan-1',
+  paymentMethodId: 'pm-1',
+  totalAmount: 1000,
+  installmentsCount: 3,
+  currentInstallment: 1,
+  completed: false,
+  createdAt: new Date('2026-01-01'),
 };
 
 function createMockPrisma() {
@@ -39,8 +51,23 @@ function createMockPrisma() {
       >(),
       count: jest.fn<Promise<number>, [{ where: Record<string, unknown> }]>(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+    },
+    installmentPlan: {
+      create: jest.fn<
+        Promise<typeof INSTALLMENT_PLAN_ROW>,
+        [{ data: Record<string, unknown> }]
+      >(),
+      findMany: jest.fn<
+        Promise<(typeof INSTALLMENT_PLAN_ROW)[]>,
+        [{ where: Record<string, unknown> }]
+      >(),
+      update: jest.fn<
+        Promise<typeof INSTALLMENT_PLAN_ROW>,
+        [{ where: { id: string }; data: Record<string, unknown> }]
+      >(),
     },
   };
 }
@@ -154,7 +181,7 @@ describe('ExpensesRepository', () => {
     expect(prisma.expense.update).toHaveBeenCalledWith({
       where: { id: 'expense-1' },
       data: { description: 'Actualizado' },
-      include: { splits: true },
+      include: { splits: true, installmentPlan: true },
     });
     expect(result.description).toBe('Actualizado');
   });
@@ -165,5 +192,60 @@ describe('ExpensesRepository', () => {
     expect(prisma.expense.delete).toHaveBeenCalledWith({
       where: { id: 'expense-1' },
     });
+  });
+
+  it('createInstallmentPlan inserta con currentInstallment=1 y completed=false', async () => {
+    prisma.installmentPlan.create.mockResolvedValue(INSTALLMENT_PLAN_ROW);
+    const result = await repository.createInstallmentPlan({
+      paymentMethodId: 'pm-1',
+      totalAmount: 1000,
+      installmentsCount: 3,
+    });
+    expect(prisma.installmentPlan.create).toHaveBeenCalledWith({
+      data: {
+        paymentMethodId: 'pm-1',
+        totalAmount: 1000,
+        installmentsCount: 3,
+        currentInstallment: 1,
+        completed: false,
+      },
+    });
+    expect(result.id).toBe('plan-1');
+  });
+
+  it('findActiveInstallmentPlans filtra por paymentMethodId y completed=false', async () => {
+    prisma.installmentPlan.findMany.mockResolvedValue([INSTALLMENT_PLAN_ROW]);
+    const result = await repository.findActiveInstallmentPlans('pm-1');
+    expect(prisma.installmentPlan.findMany).toHaveBeenCalledWith({
+      where: { paymentMethodId: 'pm-1', completed: false },
+    });
+    expect(result).toHaveLength(1);
+  });
+
+  it('advanceInstallmentPlan actualiza currentInstallment y completed', async () => {
+    prisma.installmentPlan.update.mockResolvedValue(INSTALLMENT_PLAN_ROW);
+    await repository.advanceInstallmentPlan('plan-1', 3, true);
+    expect(prisma.installmentPlan.update).toHaveBeenCalledWith({
+      where: { id: 'plan-1' },
+      data: { currentInstallment: 3, completed: true },
+    });
+  });
+
+  it('findLatestByInstallmentPlanId ordena por installmentNumber desc', async () => {
+    prisma.expense.findFirst.mockResolvedValue(EXPENSE_ROW);
+    const result = await repository.findLatestByInstallmentPlanId('plan-1');
+    expect(prisma.expense.findFirst).toHaveBeenCalledWith({
+      where: { installmentPlanId: 'plan-1' },
+      orderBy: { installmentNumber: 'desc' },
+      include: { splits: true, installmentPlan: true },
+    });
+    expect(result?.id).toBe('expense-1');
+  });
+
+  it('findLatestByInstallmentPlanId devuelve null si no hay ninguna', async () => {
+    prisma.expense.findFirst.mockResolvedValue(null);
+    await expect(
+      repository.findLatestByInstallmentPlanId('plan-1'),
+    ).resolves.toBeNull();
   });
 });

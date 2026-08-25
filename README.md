@@ -212,7 +212,17 @@ splits, nunca a `GroupsRepository` directo).
   `KEYCLOAK_JWKS_URI` (a dónde pedir las claves) son variables separadas.
 - **`POST /groups/:id/invite` no está implementado** — la spec lo marca como decisión
   pendiente (invitación por email vs. lookup directo).
-- **`isRecurring`/`installments` no están en el body de `POST /expenses`** todavía — se
-  resuelven junto con el módulo `recurring-expenses` (fase 2).
+- **`isRecurring`** (gastos fijos recurrentes, ej. colegio/alquiler — mismo monto todos los
+  ciclos) **no está en el body de `POST /expenses`** todavía — es el módulo
+  `recurring-expenses` (fase 2), distinto de cuotas (`installments_count`, ya implementado).
 - **Permisos de escritura en `expenses`:** cualquier miembro del grupo puede editar/borrar,
   no solo quien lo creó (la spec no lo restringe explícitamente).
+- **Cuotas (installments):** `POST /expenses` con `installments_count` interpreta `amount`
+  como el TOTAL de la compra, no el monto de esa fila — se persiste `total / cuotas`
+  (la última cuota absorbe el resto de la división). `POST /expenses/close-cycle`
+  (body: `payment_method_id`) avanza manualmente cada `InstallmentPlan` activo de una
+  tarjeta CREDIT a su cuota siguiente, clonando grupo/splits del gasto más reciente de
+  ese plan y reescalando los montos al nuevo monto de cuota. No hay cron todavía — es
+  100% manual, y no es idempotente (llamarlo dos veces en el mismo ciclo genera dos
+  cuotas). El endpoint vive en `ExpensesController` (no en `PaymentMethodsController`)
+  para no crear una dependencia circular de módulos, ver `AGENTS.md`.

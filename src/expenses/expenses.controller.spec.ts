@@ -16,6 +16,7 @@ describe('ExpensesController', () => {
     findById: jest.Mock;
     patch: jest.Mock;
     delete: jest.Mock;
+    closeCycle: jest.Mock;
   };
   let controller: ExpensesController;
 
@@ -26,6 +27,7 @@ describe('ExpensesController', () => {
       findById: jest.fn(),
       patch: jest.fn(),
       delete: jest.fn(),
+      closeCycle: jest.fn(),
     };
     controller = new ExpensesController(service as unknown as ExpensesService);
   });
@@ -64,5 +66,12 @@ describe('ExpensesController', () => {
   it('delete delega en el service y no devuelve contenido', async () => {
     await controller.delete(USER, 'expense-1');
     expect(service.delete).toHaveBeenCalledWith('user-1', 'expense-1');
+  });
+
+  it('closeCycle delega en el service', async () => {
+    await controller.closeCycle(USER, { paymentMethodId: 'pm-1' });
+    expect(service.closeCycle).toHaveBeenCalledWith('user-1', {
+      paymentMethodId: 'pm-1',
+    });
   });
 });
