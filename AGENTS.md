@@ -112,6 +112,13 @@ curl examples) is in `README.md`.
 - **Prisma generator uses `moduleFormat = "cjs"`** (`prisma/schema.prisma`) —
   this project is CommonJS (Nest's default) but Prisma 7's generated client is
   ESM by default, which breaks `require()` under Node/Jest without this.
+- **`@nestjs/swagger`'s CLI plugin is enabled** (`nest-cli.json`'s
+  `compilerOptions.plugins`) — without it, every DTO in `/docs-json` showed
+  up as `{ "type": "object", "properties": {} }` (no fields, no query
+  params on `search()` endpoints) since none of the DTOs have explicit
+  `@ApiProperty()` decorators. The plugin infers them from the TS types +
+  `class-validator` decorators already there. Found while building
+  `personal-finance-mcp-server` off this API's Swagger.
 - **`.claude/`, `.windsurf/`, `.agents/`, `skills-lock.json` are gitignored on
   purpose** (`gitignore-agent-tooling` skill) — don't remove that just because
   `prisma generate` or another CLI wants to write there again.
