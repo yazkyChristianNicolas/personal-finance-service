@@ -1,0 +1,49 @@
+name: Development
+
+# Verify en cada PR; en push a `development`, además, construye las imágenes una sola vez
+# (`runtime` como tree-<árbol de git> y `migrate` como tree-<árbol>-migrate) y las despliega
+# en el environment `development`: primero corre las migraciones y después actualiza la API.
+# production.yml promueve esas mismas imágenes al mergear a `main`.
+# Build y deploy: yazkyChristianNicolas/gh-workflows (container-image.yml, ver su README).
+on:
+  pull_request:
+  push:
+    branches: [development]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      # Valores de desarrollo: los decoradores y Prisma leen variables al cargar los módulos.
+      - run: cp .env.example .env
+      - run: npm ci
+      - run: npx prisma generate
+      # Sin --fix: en CI el lint no modifica archivos, solo falla.
+      - run: npx eslint "{src,apps,libs,test,scripts}/**/*.ts"
+      - run: npx tsc --noEmit -p tsconfig.json
+      - run: npm test
+
+  image:
+    needs: verify
+    if: github.event_name != 'pull_request'
+    uses: yazkyChristianNicolas/gh-workflows/.github/workflows/container-image.yml@main
+    with:
+      target: runtime
+      extra-targets: migrate
+      push-image: true
+      deploy: true
+      environment: development
+      compose-service: finance-api
+      pre-deploy-service: finance-migrate
+      tag-variable: FINANCE_API_TAG
+    secrets: inherit

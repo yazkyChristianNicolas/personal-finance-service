@@ -1,0 +1,25 @@
+name: Production
+
+# Promoción: al mergear `development` a `main` no se buildea nada. Se buscan las imágenes
+# (`runtime` y `migrate`) que ya se construyeron y probaron en desarrollo para este mismo
+# contenido (mismo árbol de git), se corren las migraciones y se actualiza la API en el
+# environment `production`. Si no existen, el contenido no pasó por `development`.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    uses: yazkyChristianNicolas/gh-workflows/.github/workflows/promote-image.yml@main
+    with:
+      environment: production
+      extra-targets: migrate
+      compose-service: finance-api
+      pre-deploy-service: finance-migrate
+      tag-variable: FINANCE_API_TAG
+    secrets: inherit

@@ -1,0 +1,29 @@
+name: Cleanup images
+
+# Retención en GHCR: conserva lo que corre en cada ambiente (tags `development`/`production`
+# y sus variantes `-migrate`),
+# las últimas 10 imágenes y lo de las últimas 24 h; borra el resto. Lunes 06:00 UTC; a mano
+# arranca en dry-run; un PR que cambie este archivo corre en dry-run.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Mostrar qué borraría sin borrar.
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - .github/workflows/cleanup-images.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    uses: yazkyChristianNicolas/gh-workflows/.github/workflows/cleanup-images.yml@main
+    with:
+      keep-last: 10
+      dry-run: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.dry-run) }}
